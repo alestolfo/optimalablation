@@ -304,100 +304,125 @@ def train_activations(model, feature_directions, reg_scheduler, verbose=False):
 # potentially very large
 
 # %%
-# need to do a smarter thing with a smaller model maybe?
-repl = torch.zeros(batch_size, activation_dim)
-
-feature_directions = torch.normal(0,1,(num_features, activation_dim)).to(device)
-feature_directions = feature_directions / feature_directions.norm(dim=-1, keepdim=True)
-
 # %%
-
-m_lr = 1e-2
-# %%
-
-feature_param = torch.nn.Parameter(feature_directions)
-feature_optimizer = torch.optim.AdamW([feature_param], lr=m_lr, weight_decay=0)
-# %%
-
-# %%
-
-avg_e_score = torch.zeros((num_features,)).to(device)
-updates_per_feature = torch.zeros((num_features,)).to(device)
 i = 0
 # %%
-while i < 10000:
+folder="v3"
+all_feature_directions = []
+result_cols = ['cos_sim', 'initial_losses', 'final_losses', 'convergence_times', 'initial_similarities']
+result_data = []
+avg_e_score = []
+updates_per_feature = []
+for i in [0,100,200,300,400,500]:
+    with open(f"outputs/{folder}/feature_{i}.pkl", "rb") as f:
+        all_feature_directions.append(pickle.load(f))
+    with open(f"outputs/{folder}/updates_{i}.pkl", "rb") as f:
+        updates_per_feature.append(pickle.load(f))
+
+    x={}
+    result_data.append(x)
+    for col in result_cols:
+        x[col] = []
+    avg_e_score.append(torch.zeros((num_features,)).to(device))
+
+# %%
+while i < 1000:
     batch = next(owt_iter)['tokens']
 
-    idxes, optim_activations, initial_similarities, act_norms, initial_losses, convergence_times, final_losses, e_scores, avg_e, update_ct, convergence_graph = train_activations(model, feature_param.detach(), poly_scheduler)
+    for j,feature_directions in enumerate(all_feature_directions):
 
-    if i % 100 == 0:
-        if convergence_graph is not None:
-            [converged, penalties, av_feature_similarities] = convergence_graph
-            plot_curves(converged,penalties,av_feature_similarities)
-            plt.savefig(f"outputs/graphs/conv_graph_{i}.png")
-            plt.close()
+        idxes, optim_activations, initial_similarities, act_norms, initial_losses, convergence_times, final_losses, e_scores, avg_e, update_ct, convergence_graph = train_activations(model, feature_directions, poly_scheduler)
 
         cos_sim = (initial_similarities / act_norms).flatten().cpu()
-        sns.scatterplot(x=cos_sim,y=initial_losses.flatten().cpu())
-        sns.scatterplot(x=cos_sim,y=final_losses.flatten().cpu())
-        plt.savefig(f"outputs/graphs/cos_loss_{i}.png")
-        plt.close()
 
-        sns.scatterplot(x=initial_losses.flatten().cpu(),y=final_losses.flatten().cpu())
-        plt.savefig(f"outputs/graphs/init_final_{i}.png")
-        plt.close()
-
-        sns.scatterplot(x=cos_sim,y=convergence_times.flatten().cpu())
-        plt.savefig(f"outputs/graphs/cos_conv_{i}.png")
-        plt.close()
-
-        sns.scatterplot(x=initial_similarities.flatten().cpu(),y=initial_losses.flatten().cpu())
-        sns.scatterplot(x=initial_similarities.flatten().cpu(),y=final_losses.flatten().cpu())
-        plt.savefig(f"outputs/graphs/proj_loss{i}.png")
-        plt.close()
-
-        sns.scatterplot(x=initial_similarities.flatten().cpu(),y=convergence_times.flatten().cpu())
-        plt.savefig(f"outputs/graphs/proj_conv_{i}.png")
-        plt.close()
-
-    avg_e_score = (i * avg_e_score + avg_e) / (i+1)
-    updates_per_feature += update_ct
-
-    feature_optimizer.zero_grad()
-
-    # not differentiable
-    m_activations = linear_proj(optim_activations, feature_param[idxes[:,1]])
-
-    with torch.no_grad():
-        target_probs = model(batch)[:,-1].softmax(dim=-1)
-
-    m_probs = model.run_with_hooks(
-        batch, 
-        fwd_hooks=[(intervene_filter, 
-                    partial(ablation_hook_last_token,
-                        idxes[:,0],
-                        m_activations
-                    ))]
-    )[:,-1].softmax(dim=-1)
-
-    loss = ((avg_e_score[idxes[:,1]]-5*e_scores.flatten()) * kl_loss(m_probs.log(), target_probs[idxes[:,0]]).sum(dim=-1)).sum()
-
-    loss.backward()
-    feature_optimizer.step()
-
-    feature_param.data /= feature_param.data.norm(dim=-1, keepdim=True)
-
-    if i % 100 == 0:
-        folder = "v3"
-        with open(f"outputs/{folder}/feature_{i}.pkl", "wb") as f:
-            pickle.dump(feature_param.data.detach(), f)
-        with open(f"outputs/{folder}/updates_{i}.pkl", "wb") as f:
-            pickle.dump(updates_per_feature.data.detach(), f)
-        with open(f"outputs/{folder}/av_e_{i}.pkl", "wb") as f:
-            pickle.dump(avg_e_score.data.detach(), f)
-
+        result_data[j]['cos_sim'].append(cos_sim)
+        result_data[j]['initial_losses'].append(initial_losses)
+        result_data[j]['final_losses'].append(final_losses)
+        result_data[j]['convergence_times'].append(convergence_times)
+        result_data[j]['initial_similarities'].append(initial_similarities)
+        avg_e_score[j] = (i * avg_e_score[j] + avg_e) / (i+1)
+        updates_per_feature[j] += update_ct
     i += 1
 
     # kl_loss(abl_logits, target_logits)
 
- # %%
+# %%
+
+with open("outputs/batched_inference.pkl", "wb") as f:
+    pickle.dump([result_data, avg_e_score, updates_per_feature], f)
+
+# %%
+
+
+for j,res in enumerate(result_data):
+    for key in res:
+        if isinstance(result_data[j][key], list):
+            result_data[j][key] = torch.stack(result_data[j][key], dim=0).flatten()
+        else:
+            result_data[j][key] = result_data[j][key].flatten()
+
+# %%
+with open("outputs/batched_inference.pkl", "rb") as f:
+    [result_data, avg_e_score, updates_per_feature] = pickle.load(f)
+
+# %%
+
+for j,res in enumerate(result_data):
+    cos_sim = result_data[j]['cos_sim']
+    initial_losses = result_data[j]['initial_losses']
+    final_losses = result_data[j]['final_losses']
+    convergence_times = result_data[j]['convergence_times']
+    initial_similarities = result_data[j]['initial_similarities']
+    
+    sns.scatterplot(x=cos_sim,y=initial_losses.flatten().cpu(), s=5)
+    sns.scatterplot(x=cos_sim,y=final_losses.flatten().cpu(), s=5)
+    plt.savefig(f"outputs/graphs/cos_loss_{j}.png")
+    plt.close()
+    sns.scatterplot(x=cos_sim,y=final_losses.flatten().cpu(), s=5)
+    plt.savefig(f"outputs/graphs/cos_f_loss_{j}.png")
+    plt.close()
+
+    sns.scatterplot(x=initial_losses.flatten().cpu(),y=final_losses.flatten().cpu(), s=5)
+    plt.savefig(f"outputs/graphs/init_final_{j}.png")
+    plt.close()
+
+    sns.scatterplot(x=cos_sim,y=convergence_times.flatten().cpu(), s=5)
+    plt.savefig(f"outputs/graphs/cos_conv_{j}.png")
+    plt.close()
+
+    sns.scatterplot(x=initial_similarities.flatten().cpu(),y=initial_losses.flatten().cpu(), s=5)
+    sns.scatterplot(x=initial_similarities.flatten().cpu(),y=final_losses.flatten().cpu(), s=5)
+    plt.savefig(f"outputs/graphs/proj_loss_{j}.png")
+    plt.close()
+
+    sns.scatterplot(x=initial_similarities.flatten().cpu(),y=final_losses.flatten().cpu(), s=5)
+    plt.savefig(f"outputs/graphs/proj_f_loss_{j}.png")
+    plt.close()
+
+    sns.scatterplot(x=initial_similarities.flatten().cpu(),y=convergence_times.flatten().cpu(), s=5)
+    plt.savefig(f"outputs/graphs/proj_conv_{j}.png")
+    plt.close()
+
+# %%
+for j,res in enumerate(result_data):
+    updated_features = all_feature_directions[j][(updates_per_feature[j] > 1).nonzero()].squeeze()
+    feat_cos_sim = einsum("feat_1 d_model, feat_2 d_model -> feat_1 feat_2", updated_features, updated_features).cpu() - torch.eye(updated_features.shape[0])
+    sns.histplot(x=feat_cos_sim.cpu().flatten(),label=f"{j} train")
+    print(updated_features.shape)
+plt.legend()
+plt.savefig(f"outputs/graphs/feat_sim.png")
+plt.close()
+
+# %%
+for j,res in enumerate(result_data):
+    updated_features = all_feature_directions[j][(updates_per_feature[j] > 5).nonzero()].squeeze()
+    feat_cos_sim = (einsum("feat_1 d_model, feat_2 d_model -> feat_1 feat_2", updated_features, updated_features).cpu() - torch.eye(updated_features.shape[0]))
+    with open(f"outputs/v3/feat_sum_{j}.pkl", "wb") as f:
+        pickle.dump(feat_cos_sim, f)
+    if (feat_cos_sim > .2).nonzero().shape[0] > 0:
+        sns.histplot(x=feat_cos_sim.flatten()[(feat_cos_sim.flatten() > .2).nonzero()[:,0]].cpu(), label=f"{j} train")
+    print((feat_cos_sim > .6).nonzero()[:,0].unique().shape)
+plt.legend()
+plt.savefig(f"outputs/graphs/feat_sim_zoomed.png")
+plt.close()
+# %%
