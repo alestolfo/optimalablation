@@ -80,7 +80,7 @@ for i in tqdm(range(100000)):
 
 # %%
 folder="pca"
-i=9000
+i=5000
 with open(f"outputs/{folder}/feature_{i}.pkl", "rb") as f:
     encoder_mtrx = pickle.load(f)
 with open(f"outputs/{folder}/updates_{i}.pkl", "rb") as f:

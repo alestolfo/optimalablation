@@ -9,18 +9,19 @@ import math
 from functools import partial
 import torch.optim
 import time
+from encoders import UntiedEncoder
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from training_utils import load_model_data, save_hook_last_token, ablation_hook_last_token
+from training_utils import load_model_data, save_hook_last_token, ablation_all_hook_last_token
 
 # %%
 
 
 # model_name = "EleutherAI/pythia-70m-deduped"
 model_name = "gpt2-small"
-batch_size = 8
-device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size)
+batch_size = 20
+device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size, device="cpu")
 
 # inverse probe setting
 layer_no = 6
@@ -29,9 +30,9 @@ activation_dim = 768
 features_per_batch = 50 * batch_size
 
 # learning hyperparameters
-convergence_tol = .005
+convergence_tol = 1e-6
 similarity_tol = .05
-lr_act = .05
+lr_act = .01
 top_k = 20
 relu = torch.nn.ReLU()
 kl_loss = torch.nn.KLDivLoss(reduction="none")
@@ -48,9 +49,9 @@ def plot_curves(converged, penalties, feat_similarities):
     ax2 = ax1.twinx()
     ax3 = ax1.twinx()
 
-    line1 = sns.lineplot(x=range(len(converged)), y=converged, ax=ax1, label="convergence", color="blue")
-    line2 = sns.lineplot(x=range(len(converged)), y=penalties, ax=ax2, label="feature penalty", color="red")
-    line3 = sns.lineplot(x=range(len(converged)), y=feat_similarities, ax=ax3, label="avg feature similarity", color="orange")
+    # line1 = sns.lineplot(x=range(len(converged)), y=converged, ax=ax3, label="convergence", color="blue")
+    line2 = sns.lineplot(x=range(len(converged)), y=penalties, ax=ax2, label="sparsity", color="red")
+    line3 = sns.lineplot(x=range(len(converged)), y=feat_similarities, ax=ax1, label="model loss", color="orange")
 
     handles, labels = [], []
     for ax in [ax1, ax2, ax3]:
@@ -63,7 +64,150 @@ def plot_curves(converged, penalties, feat_similarities):
     ax3.get_legend().set_visible(False)
 
 # %%
+def train_activations(model, batch, feature_directions, verbose=False):
+    with torch.no_grad():
+        model.eval()
+        
+        # save the original activations
+        cur_activations = []
 
+        # -1 gives last token
+        target_probs = model.run_with_hooks(batch, fwd_hooks=[(intervene_filter, partial(save_hook_last_token, cur_activations))])[:,-1].softmax(dim=-1)
+
+        cur_activations = cur_activations[0]
+
+    for param in model.parameters():
+        param.requires_grad = False
+    
+    # initial_similarities = einsum(
+    #     "batch d_model, feature d_model -> batch feature", 
+    #     cur_activations,
+    #     feature_directions
+    # )
+    initial_similarities = torch.rand((batch.shape[0], feature_directions.shape[0])).to(device)
+    opt_features = torch.nn.Parameter(initial_similarities)
+
+    optimizer = torch.optim.SGD([opt_features], lr=lr_act, weight_decay=0)
+    
+    continue_training = torch.ones((opt_features.shape[0],)).to(device)
+    remainder = continue_training.sum()
+    converged = []
+    sparsity_penalty = []
+    av_loss = []
+
+    i = 0
+    while remainder > 0:
+        continue_idx = continue_training.nonzero()[:,0]
+        converged.append(continue_idx.shape[0])
+
+        optimizer.zero_grad()
+        opt_activations = einsum(
+            "batch feature, feature d_model -> batch d_model", 
+            opt_features[continue_idx].relu(),
+            feature_directions
+        )
+        penalty = opt_features[continue_idx].abs().sum(dim=-1)
+        sparsity_penalty.append(penalty.mean().item())
+
+        cur_probs = model.run_with_hooks(
+            batch, 
+            fwd_hooks=[(intervene_filter, 
+                        partial(ablation_all_hook_last_token,
+                                opt_activations[continue_idx])
+                        )]
+        )[:,-1].softmax(dim=-1)
+        
+        # print(time.time_ns() - start_time)
+        # start_time = time.time_ns()
+
+        # kl_losses = kl_loss(cur_probs.log(), target_probs[continue_idx[:,0]]).sum(dim=-1)
+        kl_losses = kl_loss(cur_probs.log(), target_probs).sum(dim=-1)
+        av_loss.append(kl_losses.mean().item())
+
+        loss = kl_losses.sum() + penalty.sum()
+
+        prev_features = opt_features[continue_idx].detach()
+        loss.backward()
+        optimizer.step()
+        stop_train = ((opt_features[continue_idx]-prev_features).norm(dim=-1) < convergence_tol).nonzero()
+        continue_training[continue_idx[stop_train]] = 0
+        remainder = continue_training.sum()
+
+        i += 1
+        if i % -10 == -1:
+            # print(i)
+            plot_curves(converged, sparsity_penalty, av_loss)
+            plt.show()
+    
+    return opt_features, converged, sparsity_penalty, av_loss
+
+
+
+# %%
+folder = "v3"
+with open(f"init_sae/{folder}/feature_{0}.pkl", "rb") as f:
+    feature_directions = (pickle.load(f)).to(device)
+
+
+sae = UntiedEncoder(num_features, activation_dim).to(device)
+sae.load_state_dict(torch.load(f"SAE_training/SAE_untied_2/epoch_{25}.pt"))
+
+feature_directions = sae.feature_weights.detach()
+# # feature_directions = torch.normal(0,1,(num_features, activation_dim)).to(device)
+feature_directions = feature_directions / feature_directions.norm(dim=-1, keepdim=True)
+
+# %%
+i = 0
+while i < 1:
+    batch = next(owt_iter)['tokens']
+
+    # with torch.no_grad():
+    #     model.eval()
+        
+    #     # save the original activations
+    #     cur_activations = []
+
+    #     # -1 gives last token
+    #     target_probs = model.run_with_hooks(batch, fwd_hooks=[(intervene_filter, partial(save_hook_last_token, cur_activations))])[:,-1].softmax(dim=-1)
+
+    #     cur_activations = cur_activations[0]
+
+    # for param in model.parameters():
+    #     param.requires_grad = False
+    
+    # initial_similarities = einsum(
+    #     "batch d_model, feature d_model -> batch feature", 
+    #     cur_activations - sae.floating_mean,
+    #     sae.encoder_weights
+    # )
+    # opt_features = torch.nn.Parameter(initial_similarities)
+
+    # reconstruction = einsum(
+    #     "batch feature, feature d_model -> batch d_model", 
+    #     (initial_similarities + sae.bias).relu(),
+    #     feature_directions
+    # ) + sae.floating_mean
+
+    # with torch.no_grad():
+    #     reconstruction = sae(cur_activations)[0]
+
+    # sns.histplot((cur_activations-reconstruction).norm(dim=-1).detach().flatten().cpu().numpy())
+    # plt.show()
+
+    # normalized_activations = cur_activations / cur_activations.norm(dim=-1, keepdim=True)
+    # cos_sim = einsum(
+    #     "batch d_model, feature d_model -> batch feature", 
+    #     normalized_activations,
+    #     feature_directions
+    # )
+    # sns.histplot(normalized_activations.flatten().cpu().numpy())
+
+    features, cv, sparsity, av_loss = train_activations(model, batch, feature_directions)
+    # plot_curves(cv, sparsity, av_loss)
+    # plt.show()
+    i += 1
+
+# %%
 def linear_proj(starting_activations, rvlt_directions):
     return starting_activations - (starting_activations * rvlt_directions).sum(dim=-1, keepdim=True) * rvlt_directions / rvlt_directions.norm(dim=-1, keepdim=True)
 
@@ -368,11 +512,11 @@ with open("init_sae/batched_inference.pkl", "rb") as f:
 # %%
 
 for j,res in enumerate(result_data):
-    cos_sim = torch.cat(result_data[j]['cos_sim'], dim=0)
-    initial_losses = torch.cat(result_data[j]['initial_losses'], dim=0)
-    final_losses = torch.cat(result_data[j]['final_losses'], dim=0)
-    convergence_times = torch.cat(result_data[j]['convergence_times'], dim=0)
-    initial_similarities = torch.cat(result_data[j]['initial_similarities'], dim=0)
+    cos_sim = result_data[j]['cos_sim']
+    initial_losses = result_data[j]['initial_losses']
+    final_losses = result_data[j]['final_losses']
+    convergence_times = result_data[j]['convergence_times']
+    initial_similarities = result_data[j]['initial_similarities']
     
     sns.scatterplot(x=cos_sim,y=initial_losses.flatten().cpu(), s=5)
     sns.scatterplot(x=cos_sim,y=final_losses.flatten().cpu(), s=5)
@@ -425,14 +569,4 @@ for j,res in enumerate(result_data):
 plt.legend()
 plt.savefig(f"init_sae/graphs/feat_sim_zoomed.png")
 plt.close()
-# %%
-
-sns.histplot(updates_per_feature[1][updates_per_feature[1] > 5].flatten().cpu().numpy())
-
-# %%
-change_distances = (all_feature_directions[1]- all_feature_directions[0]).square().sum(dim=-1).sqrt()
-sns.histplot((change_distances / updates_per_feature[1]).cpu().numpy())
-
-# %%
-sns.histplot((change_distances / updates_per_feature[1]).cpu().numpy())
 # %%

@@ -6,6 +6,7 @@ from tqdm import tqdm
 from fancy_einsum import einsum
 from einops import rearrange
 import math
+from encoders import UntiedEncoder
 from functools import partial
 import torch.optim
 import time
@@ -32,7 +33,7 @@ features_per_batch = 50 * batch_size
 convergence_tol = .005
 similarity_tol = .05
 lr_act = .05
-top_k = 20
+top_k = 30
 relu = torch.nn.ReLU()
 kl_loss = torch.nn.KLDivLoss(reduction="none")
 
@@ -307,12 +308,16 @@ def train_activations(model, feature_directions, reg_scheduler, verbose=False):
 # need to do a smarter thing with a smaller model maybe?
 repl = torch.zeros(batch_size, activation_dim)
 
-feature_directions = torch.normal(0,1,(num_features, activation_dim)).to(device)
+sae = UntiedEncoder(num_features, activation_dim).to(device)
+sae.load_state_dict(torch.load(f"SAE_training/SAE_untied_2/epoch_{25}.pt"))
+
+feature_directions = sae.feature_weights.detach()
+# feature_directions = torch.normal(0,1,(num_features, activation_dim)).to(device)
 feature_directions = feature_directions / feature_directions.norm(dim=-1, keepdim=True)
 
 # %%
 
-m_lr = 1e-2
+m_lr = 1e-3
 # %%
 
 feature_param = torch.nn.Parameter(feature_directions)
@@ -334,30 +339,30 @@ while i < 10000:
         if convergence_graph is not None:
             [converged, penalties, av_feature_similarities] = convergence_graph
             plot_curves(converged,penalties,av_feature_similarities)
-            plt.savefig(f"outputs/graphs/conv_graph_{i}.png")
+            plt.savefig(f"init_sae/graphs/conv_graph_{i}.png")
             plt.close()
 
         cos_sim = (initial_similarities / act_norms).flatten().cpu()
         sns.scatterplot(x=cos_sim,y=initial_losses.flatten().cpu())
         sns.scatterplot(x=cos_sim,y=final_losses.flatten().cpu())
-        plt.savefig(f"outputs/graphs/cos_loss_{i}.png")
+        plt.savefig(f"init_sae/graphs/cos_loss_{i}.png")
         plt.close()
 
         sns.scatterplot(x=initial_losses.flatten().cpu(),y=final_losses.flatten().cpu())
-        plt.savefig(f"outputs/graphs/init_final_{i}.png")
+        plt.savefig(f"init_sae/graphs/init_final_{i}.png")
         plt.close()
 
         sns.scatterplot(x=cos_sim,y=convergence_times.flatten().cpu())
-        plt.savefig(f"outputs/graphs/cos_conv_{i}.png")
+        plt.savefig(f"init_sae/graphs/cos_conv_{i}.png")
         plt.close()
 
         sns.scatterplot(x=initial_similarities.flatten().cpu(),y=initial_losses.flatten().cpu())
         sns.scatterplot(x=initial_similarities.flatten().cpu(),y=final_losses.flatten().cpu())
-        plt.savefig(f"outputs/graphs/proj_loss{i}.png")
+        plt.savefig(f"init_sae/graphs/proj_loss{i}.png")
         plt.close()
 
         sns.scatterplot(x=initial_similarities.flatten().cpu(),y=convergence_times.flatten().cpu())
-        plt.savefig(f"outputs/graphs/proj_conv_{i}.png")
+        plt.savefig(f"init_sae/graphs/proj_conv_{i}.png")
         plt.close()
 
     avg_e_score = (i * avg_e_score + avg_e) / (i+1)
@@ -389,11 +394,11 @@ while i < 10000:
 
     if i % 100 == 0:
         folder = "v3"
-        with open(f"outputs/{folder}/feature_{i}.pkl", "wb") as f:
+        with open(f"init_sae/{folder}/feature_{i}.pkl", "wb") as f:
             pickle.dump(feature_param.data.detach(), f)
-        with open(f"outputs/{folder}/updates_{i}.pkl", "wb") as f:
+        with open(f"init_sae/{folder}/updates_{i}.pkl", "wb") as f:
             pickle.dump(updates_per_feature.data.detach(), f)
-        with open(f"outputs/{folder}/av_e_{i}.pkl", "wb") as f:
+        with open(f"init_sae/{folder}/av_e_{i}.pkl", "wb") as f:
             pickle.dump(avg_e_score.data.detach(), f)
 
     i += 1

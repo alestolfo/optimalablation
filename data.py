@@ -1,10 +1,12 @@
 # %%
 # import pickle 
 import datasets 
+from tqdm import tqdm
 # import torch
 from nanda_utils import tokenize_and_concatenate
 # from einops import rearrange
 from torch.utils.data import DataLoader, random_split
+
 # %%
 # TRAIN_SAMPLES = 100
 # TEST_SAMPLES = 1000
@@ -45,19 +47,26 @@ from torch.utils.data import DataLoader, random_split
 #     tokens = torch.cat([prefix, tokens], axis=1)
 #     return tokens
 
-def retrieve_owt_data(batch_size, ctx_length, tokenizer, split="train", from_saved=False):
-    dataset = datasets.load_dataset("Elriggs/openwebtext-100k", split="train")
-    if split == "train":
-        # use 80% of the data
-        dataset = dataset.select(range(int(0.2*len(dataset))))
-    elif split == "test":
-        # use 20% of the data
-        dataset = dataset.select(range(int(0.8*len(dataset)), len(dataset)))
-        print(len(dataset))
-    else:
-        raise ValueError("split must be either train or test")
+def retrieve_owt_data(batch_size, ctx_length, tokenizer, split="train", from_saved=False, ds_name="Elriggs/openwebtext-100k"):
+    dataset = datasets.load_dataset(ds_name, split="train")
+    # if split == "train":
+    #     # use 80% of the data
+        # dataset = dataset.select(range(int(0.2*len(dataset))))
+    # elif split == "test":
+    #     # use 20% of the data
+    #     dataset = dataset.select(range(int(0.8*len(dataset)), len(dataset)))
+    # print(len(dataset))
     tokens_dataset = tokenize_and_concatenate(dataset, tokenizer, streaming=False, max_length=ctx_length, column_name="text", add_bos_token=True, num_proc=4)
+    tokens_dataset
     data_loader = DataLoader(tokens_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     return data_loader
+
+# # %%
+# dataset = iter(datasets.load_dataset("Skylion007/openwebtext", split="train", streaming=True))
+# dataset = datasets.Dataset.from_dict({"text":[next(dataset)["text"] for i in tqdm(range(1000000))]})
+
+# # %%
+# dataset.push_to_hub("maxtli/OpenWebText-2M")
+
 
 # %%
