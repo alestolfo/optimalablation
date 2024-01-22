@@ -66,30 +66,40 @@ def ablation_all_hook_last_token(repl, act, hook):
     # return act.repeat(features_per_batch,1,1)
     # pass
 
-def ablation_hook_copy_all_tokens(bsz, act, hook):
+def ablation_hook_copy_all_tokens(bsz, n_heads, act, hook):
     # need to repeat this N times for the number of heads.
-    act = torch.cat(act,act[:bsz])
+    act = torch.cat([act,*[act[:bsz] for _ in range(n_heads)]], dim=0)
     return act
 
-def ablation_hook_attention_all_tokens(constants, bsz, attentions, hook):
-    attentions[-bsz:] = constants
+def ablation_hook_attention_all_tokens(constants, bsz, activation_storage, attentions, hook):
+    n_heads = constants.shape[0]
+    start = bsz * n_heads
+    for i in range(constants.shape[0]):
+        attentions[-start:-start+n_heads,:,i] = constants[i].clone()
+        start += n_heads
+    
+    with torch.no_grad():
+        activation_storage.append(attentions[:bsz].mean(dim=[0,1]))
     return attentions
 
 # attentions: (batch_size + batch_size * n_samples) x seq_len x n_heads x d_model
 # constants: n_heads x d_model
-# prune mask: (batch_size * n_samples) x n_heads, 0 = keep, 1 = prune
+# prune mask: (batch_size * n_samples) x n_heads, 0 = prune, 1 = keep
 def pruning_hook_attention_all_tokens(constants, prune_mask, bsz, attentions, hook):
     # N by 2. First column = batch item, second column = head idx
-    prune_idx = prune_mask.nonzero()
-    attentions[bsz + prune_idx[:,0],:,prune_idx[:,1]] = constants[prune_idx[:,1]]
+    prune_mask = prune_mask.unsqueeze(1).unsqueeze(-1)
+    attentions[bsz:] = (1-prune_mask) * constants + prune_mask * attentions[bsz:].clone()
+
+    # prune_idx = prune_mask.clone()
+    # attentions[bsz + prune_idx[:,0],:,prune_idx[:,1]] = prune_idx * constants[prune_idx[:,1]]
     return attentions
 
 def tuned_lens_hook(activation_storage, tuned_lens_weights, tuned_lens_bias, act, hook):
-    activation_storage.append(einsum("result activation, batch activation -> batch result", tuned_lens_weights, act[:,[-1]]) + tuned_lens_bias)
+    activation_storage.append(einsum("result activation, batch activation -> batch result", tuned_lens_weights, act[:,-1]) + tuned_lens_bias)
     return act
 
 class LinePlot:
-    def __init___(self, stat_list):
+    def __init__(self, stat_list):
         self.stat_list = stat_list
         self.stat_book = {x: [] for x in stat_list}
         self.t = 0
@@ -105,18 +115,26 @@ class LinePlot:
                 self.stat_book[k].append(self.stat_book[k][-1])
         self.t += 1
     
-    def plot(self, series=None, step=1, start=0, end=0, agg='mean'):
+    def plot(self, series=None, step=1, start=0, end=0, agg='mean', twinx=True):
         if series is None:
             series = self.stat_list
         if end <= start:
             end = self.t
         t = [i for i in range(start, end, step)]
-        for s in series:
+        ax = None
+        for i,s in enumerate(series):
             if agg == 'mean':
                 yvals = [np.mean(self.stat_book[s][i:i+step]) for i in range(start, end, step)]
             else:
                 yvals = [self.stat_book[s][i] for i in range(start, end, step)]
-            sns.lineplot(x=t, y=yvals)
+            if twinx:
+                colors = ["green", "blue", "red", "orange"]
+                if ax is None:
+                    ax = sns.lineplot(x=t, y=yvals, color=colors[i])
+                else: 
+                    sns.lineplot(x=t, y=yvals, ax=ax.twinx(), color=colors[i])
+            else:
+                ax = sns.lineplot(x=t, y=yvals, label=s)
         plt.show()
     
     def export():
