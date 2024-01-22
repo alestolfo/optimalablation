@@ -5,10 +5,8 @@ from transformer_lens import HookedTransformer
 from data import retrieve_owt_data
 from itertools import cycle
 import torch.optim
-from fancy_einsum import einsum
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np
 
 # %%
 def load_model_data(model_name, batch_size=8, ctx_length=25, repeats=True, ds_name=False, device="cuda:0"):
@@ -66,27 +64,6 @@ def ablation_all_hook_last_token(repl, act, hook):
     # return act.repeat(features_per_batch,1,1)
     # pass
 
-def ablation_hook_copy_all_tokens(bsz, act, hook):
-    # need to repeat this N times for the number of heads.
-    act = torch.cat(act,act[:bsz])
-    return act
-
-def ablation_hook_attention_all_tokens(constants, bsz, attentions, hook):
-    attentions[-bsz:] = constants
-    return attentions
-
-# attentions: (batch_size + batch_size * n_samples) x seq_len x n_heads x d_model
-# constants: n_heads x d_model
-# prune mask: (batch_size * n_samples) x n_heads, 0 = keep, 1 = prune
-def pruning_hook_attention_all_tokens(constants, prune_mask, bsz, attentions, hook):
-    # N by 2. First column = batch item, second column = head idx
-    prune_idx = prune_mask.nonzero()
-    attentions[bsz + prune_idx[:,0],:,prune_idx[:,1]] = constants[prune_idx[:,1]]
-    return attentions
-
-def tuned_lens_hook(activation_storage, tuned_lens_weights, tuned_lens_bias, act, hook):
-    activation_storage.append(einsum("result activation, batch activation -> batch result", tuned_lens_weights, act[:,[-1]]) + tuned_lens_bias)
-    return act
 
 class LinePlot:
     def __init___(self, stat_list):
@@ -99,24 +76,16 @@ class LinePlot:
             if k in entry:
                 self.stat_book[k].append(entry[k])
             # default behavior is flat line
-            elif self.t == 0:
-                self.stat_book[k].append(0)
             else:
                 self.stat_book[k].append(self.stat_book[k][-1])
         self.t += 1
     
-    def plot(self, series=None, step=1, start=0, end=0, agg='mean'):
-        if series is None:
-            series = self.stat_list
+    def plot(self, series, step=1, start=0, end=0):
         if end <= start:
             end = self.t
         t = [i for i in range(start, end, step)]
         for s in series:
-            if agg == 'mean':
-                yvals = [np.mean(self.stat_book[s][i:i+step]) for i in range(start, end, step)]
-            else:
-                yvals = [self.stat_book[s][i] for i in range(start, end, step)]
-            sns.lineplot(x=t, y=yvals)
+            sns.lineplot(x=t, y=[self.stat_book[s][i] for i in range(start, end, step)])
         plt.show()
     
     def export():
