@@ -44,6 +44,75 @@ intervene_filter = lambda name: name == f"blocks.{layer_no}.hook_resid_post"
 
 # %%
 
+sae = UntiedEncoder(num_features, activation_dim).to(device)
+sae.load_state_dict(torch.load(f"SAE_training/SAE_rerun_untied/epoch_{0}.pt"))
+
+init_features = sae.feature_weights.detach()
+floating_mean = sae.floating_mean.detach()
+# # feature_directions = torch.normal(0,1,(num_features, activation_dim)).to(device)
+init_features = init_features / init_features.norm(dim=-1, keepdim=True)
+
+feature_param = torch.nn.Parameter(init_features)
+feature_optimizer = torch.optim.SGD([feature_param], lr=lr_feat, weight_decay=0)
+
+# %%
+
+# rank features by ablation loss
+
+batch = next(owt_iter)['tokens']
+
+with torch.no_grad():
+    cur_activations = []
+    target_probs = model.run_with_hooks(batch, fwd_hooks=[(intervene_filter, partial(save_hook_last_token, cur_activations))])[:,-1].softmax(dim=-1)
+    cur_activations = cur_activations[0]
+
+
+
+
+
+# %%
+
+while i < 1000:
+    batch = next(owt_iter)['tokens']
+
+    with torch.no_grad():
+        cur_activations = []
+        target_probs = model.run_with_hooks(batch, fwd_hooks=[(intervene_filter, partial(save_hook_last_token, cur_activations))])[:,-1].softmax(dim=-1)
+        cur_activations = cur_activations[0]
+    
+    sparse_activations = einsum("", cur_activations)
+    
+    cur_log_probs = model.run_with_hooks(
+        batch,
+        fwd_hooks=[(intervene_filter, 
+                    partial(ablation_all_hook_last_token,
+                            sparse_activation)
+                    )]
+    )[:,-1].log_softmax(dim=-1)
+    # [:,-1].softmax(dim=-1)
+
+    kl_losses = kl_loss(cur_log_probs, target_probs).sum(dim=-1)
+
+
+
+
+# %%
+i = 0
+while i < 1000:
+    batch = next(owt_iter)['tokens']
+    lp = LinePlot(['act_step_size', 'feat_step_size', 'kl_loss', 'sparsity_loss'])
+    sparsify_activations(batch, feature_param, feature_optimizer, lp)
+
+    break
+
+    if i % -10 == -1:
+        lp.plot(step=updates_per_batch)
+    i += 1
+
+
+# %%
+
+
 # init_features = torch.rand((num_features, activation_dim)).to(device)
 # init_features /= init_features.norm(dim=-1, keepdim=True)
 

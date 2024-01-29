@@ -75,11 +75,20 @@ def ablation_hook_attention_all_tokens(constants, bsz, activation_storage, atten
     n_heads = constants.shape[0]
     start = bsz * n_heads
     for i in range(constants.shape[0]):
-        attentions[-start:-start+n_heads,:,i] = constants[i].clone()
-        start += n_heads
+        # if attentions.shape[0] > 400:
+        # print(start)
+        attentions[-start:-start+bsz,:,i] = constants[i].clone()
+        start -= bsz
     
+    # print(attentions.shape)
+    # if attentions.shape[0] > 400:
+    #     sns.histplot(attentions[:bsz][attentions[:bsz].abs() > 20].detach().flatten().cpu())
+    #     print((attentions[:bsz].abs() > 500).nonzero())
+    #     print(attentions[:bsz][(attentions[:bsz].abs() > 500)])
+        
+    # ignore first token because it is crazy
     with torch.no_grad():
-        activation_storage.append(attentions[:bsz].mean(dim=[0,1]))
+        activation_storage.append(attentions[:bsz,1:].mean(dim=[0,1]))
     return attentions
 
 # attentions: (batch_size + batch_size * n_samples) x seq_len x n_heads x d_model
@@ -115,13 +124,14 @@ class LinePlot:
                 self.stat_book[k].append(self.stat_book[k][-1])
         self.t += 1
     
-    def plot(self, series=None, step=1, start=0, end=0, agg='mean', twinx=True):
+    def plot(self, series=None, step=1, start=0, end=0, agg='mean', twinx=True, mv=False, save=None):
         if series is None:
             series = self.stat_list
         if end <= start:
             end = self.t
         t = [i for i in range(start, end, step)]
         ax = None
+        (h,l) = (None,None)
         for i,s in enumerate(series):
             if agg == 'mean':
                 yvals = [np.mean(self.stat_book[s][i:i+step]) for i in range(start, end, step)]
@@ -130,12 +140,31 @@ class LinePlot:
             if twinx:
                 colors = ["green", "blue", "red", "orange"]
                 if ax is None:
-                    ax = sns.lineplot(x=t, y=yvals, color=colors[i])
+                    ax = sns.lineplot(x=t, y=yvals, color=colors[i], label=s)
+                    h, l = ax.get_legend_handles_labels()
+                    mv_ax = ax
                 else: 
-                    sns.lineplot(x=t, y=yvals, ax=ax.twinx(), color=colors[i])
+                    ax2 = sns.lineplot(x=t, y=yvals, ax=ax.twinx(), color=colors[i], label=s)
+                    h2, l2 = ax2.get_legend_handles_labels()
+                    h += h2
+                    l += l2
+                    mv_ax = ax2
             else:
                 ax = sns.lineplot(x=t, y=yvals, label=s)
+                mv_ax = ax
+            if mv:
+                mv_series = [np.mean(yvals[i:min(len(yvals),i+mv)]) for i in range(len(yvals))]
+                sns.lineplot(x=t, y=mv_series, label=f"{s}_mv_{mv}")
+        if h is None:
+            plt.legend()
+        else:
+            plt.legend(h, l)
+        plt.tight_layout()
+
+        if save:
+            plt.savefig(save)
         plt.show()
+        plt.close()
     
     def export():
         pass

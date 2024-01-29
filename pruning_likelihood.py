@@ -22,9 +22,10 @@ from training_utils import load_model_data, pruning_hook_attention_all_tokens, L
 
 # model_name = "EleutherAI/pythia-70m-deduped"
 model_name = "gpt2-small"
+folder = "pruning/ioi_likelihood"
 batch_size = 10
 device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size)
-model.train()
+model.eval()
 model.cfg.use_attn_result = True
 
 ioi_ds = datasets.load_from_disk("../plausibleablation/data/ioi/ioi")
@@ -36,7 +37,7 @@ ioi_iter = cycle(iter(ioi_loader))
 
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
-lr = 5e-3
+lr = 5e-5
 lamb = 1
 
 # # learning hyperparameters
@@ -55,7 +56,7 @@ kl_loss = torch.nn.KLDivLoss(reduction="none")
 # with open("pruning/modes/modes_0.pkl", "rb") as f:
 #     # n_layers x n_heads x d_model
 #     modal_values = pickle.load(f)
-with open("pruning/modes/means_dumpster.pkl", "rb") as f:
+with open("pruning/modes/modes_16.pkl", "rb") as f:
 #     # n_layers x n_heads x d_model
     modal_values = pickle.load(f)
 
@@ -76,10 +77,11 @@ n_samples = 25
 
 # as in the louizos paper
 starting_beta = 2/3
+updates_per_batch = 15
 hard_concrete_endpoints = (-0.1, 1.1)
 sampling_params = [torch.nn.Parameter(
     torch.stack(
-        [(torch.rand(n_heads,)).log(), torch.ones(n_heads,) * starting_beta],
+        [torch.ones(n_heads,), torch.ones(n_heads,) * starting_beta],
         dim=1
     ).to(device)
 ) for _ in range(n_layers)]
@@ -100,7 +102,7 @@ def sample_mask(unif, sampling_params):
     hard_concrete = ((concrete + hard_concrete_endpoints[0]) * (hard_concrete_endpoints[1] - hard_concrete_endpoints[0])).clamp(0,1)
 
     # n_layers x (total_samples = batch_size * n_samples) x n_heads
-    return hard_concrete
+    return hard_concrete, concrete
 
 # %%
 
@@ -126,7 +128,7 @@ torch.autograd.set_detect_anomaly(True)
 i = 0
 j = 0
 while i < 100000:
-    batch = next(owt_iter)['tokens'].to(device)
+    # batch = next(owt_iter)['tokens'].to(device)
 
     b = next(ioi_iter)
     batch = tokenizer(b['ioi_sentences'], padding=True, return_tensors='pt')['input_ids'].to(device)
@@ -137,49 +139,60 @@ while i < 100000:
     # sample
     all_sampling_params = torch.stack(sampling_params, dim=0)
     unif = torch.rand((n_layers, batch_size * n_samples, n_heads)).to(device)
-    prune_mask = sample_mask(unif, all_sampling_params)
+    prune_mask, concrete = sample_mask(unif, all_sampling_params)
 
-    model_results = model.run_with_hooks(
-        # first batch_size samples are targets
-            batch.repeat(n_samples + 1,1),
-            fwd_hooks=[
-                (partial(attention_points_filter, layer_no), 
-                   partial(pruning_hook_attention_all_tokens,
-                           modal_values[layer_no],
-                           prune_mask[layer_no],
-                           batch_size)
-                ) for layer_no in range(n_layers)
-            ]
-    )
-    # io token
-    model_results = model_results[torch.arange(model_results.shape[0]),last_token_pos.repeat(n_samples + 1)]
+    with torch.no_grad():
+        model_results = model.run_with_hooks(
+            # first batch_size samples are targets
+                batch.repeat(n_samples + 1,1),
+                fwd_hooks=[
+                    (partial(attention_points_filter, layer_no), 
+                    partial(pruning_hook_attention_all_tokens,
+                            modal_values[layer_no],
+                            prune_mask[layer_no],
+                            batch_size)
+                    ) for layer_no in range(n_layers)
+                ]
+        )
+        # io token
+        model_results = model_results[torch.arange(model_results.shape[0]),last_token_pos.repeat(n_samples + 1)]
 
-    # io logits
-    # model_results = model_results[torch.arange(model_results.shape[0]), batch[torch.arange(batch.shape[0]), last_token_pos+1].repeat(n_samples + 1)]
+        # io logits
+        # model_results = model_results[torch.arange(model_results.shape[0]), batch[torch.arange(batch.shape[0]), last_token_pos+1].repeat(n_samples + 1)]
 
-    # kl div
-    model_results = model_results.log_softmax(dim=-1)
+        # kl div
+        model_results = model_results.log_softmax(dim=-1)
 
-    # batch_size x vocab_size
-    target_results = model_results[:batch_size]
+        # batch_size x vocab_size
+        target_results = model_results[:batch_size]
 
-    # n_samples x batch_size x vocab_size
-    ablated_results = model_results[batch_size:].unflatten(0, (n_samples,batch_size))
+        # n_samples x batch_size x vocab_size
+        ablated_results = model_results[batch_size:].unflatten(0, (n_samples,batch_size))
 
-    kl_losses = kl_loss(ablated_results, target_results.exp()).sum(dim=-1)
-    # io_loss = target_results - ablated_results
+        kl_losses = kl_loss(ablated_results, target_results.exp()).sum(dim=-1)
+        # io_loss = target_results - ablated_results
 
-    # alphas already logged
-    complexity_loss = (all_sampling_params[:,:,0]-all_sampling_params[:,:,1].relu() * (math.log(-hard_concrete_endpoints[0]/hard_concrete_endpoints[1]))).sigmoid()
+    for k in range(updates_per_batch):
+    
+        betas = (all_sampling_params[:,:,1].relu()+.001).unsqueeze(1)
+        alphas = all_sampling_params[:,:,0].unsqueeze(1)
+        concrete = concrete.clamp(.005,.995)
+        likelihood = ((betas * alphas * (concrete * (1-concrete)).pow(-betas - 1)) / (alphas * concrete.pow(-betas) + (1-concrete).pow(-betas) + .01).square()).log().sum(dim=[0,2])
 
-    loss = kl_losses.sum() + 2* lamb * complexity_loss.sum()
-    # loss = io_loss.mean() + lamb * complexity_loss.sum()
+        expected_loss = (likelihood * kl_losses.flatten()) / (likelihood.sum()+.001)
+        
+        # alphas already logged
+        complexity_loss = (all_sampling_params[:,:,0]-all_sampling_params[:,:,1].relu() * (math.log(-hard_concrete_endpoints[0]/hard_concrete_endpoints[1]))).sigmoid()
 
-    loss.backward()
+        loss = expected_loss.sum() + 0.1 * lamb * complexity_loss.sum()
+        # loss = io_loss.mean() + lamb * complexity_loss.sum()
 
-    prev_alphas = all_sampling_params[:,:,0].detach()
-    prev_betas = all_sampling_params[:,:,1].detach()
-    sampling_optimizer.step()
+        loss.backward(retain_graph=True)
+
+        prev_alphas = all_sampling_params[:,:,0].detach()
+        prev_betas = all_sampling_params[:,:,1].detach()
+        sampling_optimizer.step()
+        sampling_optimizer.zero_grad()
 
     nancount = torch.stack(sampling_params, dim=0).isnan().sum()
     
@@ -199,21 +212,21 @@ while i < 100000:
 
     if i % 100 == 10:
         sns.histplot(prune_mask.detach().flatten().cpu())
-        plt.savefig(f"pruning/ioi_rerun/mask_{j}.png")
+        plt.savefig(f"{folder}/mask_{j}.png")
         plt.close()
 
         sns.scatterplot(x=all_sampling_params[:,:,0].detach().flatten().cpu(), y=all_sampling_params[:,:,1].detach().flatten().cpu())
-        plt.savefig(f"pruning/ioi_rerun/params_{j}.png")
+        plt.savefig(f"{folder}/params_{j}.png")
         plt.close()
 
         sns.histplot(kl_losses.detach().flatten().cpu())
-        plt.savefig(f"pruning/ioi_rerun/io_loss_{j}.png")
+        plt.savefig(f"{folder}/io_loss_{j}.png")
         plt.close()
 
         if i > 0:
-            lp.plot(save=f"pruning/ioi_rerun/train_{j}.png")
+            lp.plot(save=f"{folder}/train_{j}.png")
 
-        with open(f"pruning/ioi_rerun/train_{j}.pkl", "wb") as f:
+        with open(f"{folder}/train_{j}.pkl", "wb") as f:
             pickle.dump(sampling_params, f)
 
         j += 1
@@ -222,8 +235,6 @@ while i < 100000:
     print("Complexity:", complexity_loss.sum())
 
     i += 1
-
-
 
 # %%
 

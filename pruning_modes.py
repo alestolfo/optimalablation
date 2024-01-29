@@ -22,6 +22,7 @@ from training_utils import load_model_data, pruning_hook_attention_all_tokens, L
 
 # model_name = "EleutherAI/pythia-70m-deduped"
 model_name = "gpt2-small"
+folder = "pruning/ioi_modes"
 batch_size = 10
 device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size)
 model.train()
@@ -36,7 +37,7 @@ ioi_iter = cycle(iter(ioi_loader))
 
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
-lr = 5e-3
+lr = 1e-2
 lamb = 1
 
 # # learning hyperparameters
@@ -55,7 +56,7 @@ kl_loss = torch.nn.KLDivLoss(reduction="none")
 # with open("pruning/modes/modes_0.pkl", "rb") as f:
 #     # n_layers x n_heads x d_model
 #     modal_values = pickle.load(f)
-with open("pruning/modes/means_dumpster.pkl", "rb") as f:
+with open("pruning/modes/modes_16.pkl", "rb") as f:
 #     # n_layers x n_heads x d_model
     modal_values = pickle.load(f)
 
@@ -79,7 +80,7 @@ starting_beta = 2/3
 hard_concrete_endpoints = (-0.1, 1.1)
 sampling_params = [torch.nn.Parameter(
     torch.stack(
-        [(torch.rand(n_heads,)).log(), torch.ones(n_heads,) * starting_beta],
+        [torch.ones(n_heads,) * -2, torch.ones(n_heads,) * starting_beta],
         dim=1
     ).to(device)
 ) for _ in range(n_layers)]
@@ -199,21 +200,21 @@ while i < 100000:
 
     if i % 100 == 10:
         sns.histplot(prune_mask.detach().flatten().cpu())
-        plt.savefig(f"pruning/ioi_rerun/mask_{j}.png")
+        plt.savefig(f"{folder}/mask_{j}.png")
         plt.close()
 
         sns.scatterplot(x=all_sampling_params[:,:,0].detach().flatten().cpu(), y=all_sampling_params[:,:,1].detach().flatten().cpu())
-        plt.savefig(f"pruning/ioi_rerun/params_{j}.png")
+        plt.savefig(f"{folder}/params_{j}.png")
         plt.close()
 
         sns.histplot(kl_losses.detach().flatten().cpu())
-        plt.savefig(f"pruning/ioi_rerun/io_loss_{j}.png")
+        plt.savefig(f"{folder}/io_loss_{j}.png")
         plt.close()
 
         if i > 0:
-            lp.plot(save=f"pruning/ioi_rerun/train_{j}.png")
+            lp.plot(save=f"{folder}/train_{j}.png")
 
-        with open(f"pruning/ioi_rerun/train_{j}.pkl", "wb") as f:
+        with open(f"{folder}/train_{j}.pkl", "wb") as f:
             pickle.dump(sampling_params, f)
 
         j += 1
