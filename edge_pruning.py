@@ -27,13 +27,13 @@ batch_size = 10
 device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size)
 model.train()
 model.cfg.use_attn_result = True
+model.cfg.use_split_qkv_input = True
 
 ioi_ds = datasets.load_from_disk("../plausibleablation/data/ioi/ioi")
 ioi_loader = DataLoader(ioi_ds['train'], batch_size=batch_size, shuffle=True, pin_memory=True)
 ioi_iter = cycle(iter(ioi_loader))
 
 # %%
-# inverse probe setting
 
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
@@ -41,12 +41,6 @@ lr = 1e-2
 lr_modes = 5e-4
 lamb = 3
 
-# # learning hyperparameters
-# convergence_tol = 1e-4
-# similarity_tol = .05
-# lr_act = 1e-4
-# lr_feat = 1e-5
-# updates_per_batch = 100
 # relu = torch.nn.ReLU()
 kl_loss = torch.nn.KLDivLoss(reduction="none")
 
@@ -64,10 +58,124 @@ with open("pruning/modes/ioi/modes_8.pkl", "rb") as f:
 # %%
 
 # resid_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_resid_pre"
+embed_filter = lambda name: name == f"blocks.{0}.hook_resid_pre"
 attention_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.attn.hook_result"
+mlp_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_mlp_out"
+
+attention_in_filter = lambda layer_no, circ, name: name == f"blocks.{layer_no}.hook_{circ}_input"
+mlp_in_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_mlp_in"
 
 # %%
 
+def cache_hook_all_tokens(storage, activations, hook):
+    storage.append(activations.clone())
+    return activations
+
+# attention_constants: list of all constants for attention for layers thus far
+# mlp_constants: list of all constants for embed+mlp layers thus far
+# attention_cache: contains all attentions stored thus far, list of attention outputs by later
+# mlp_cache: list of mlp outputs by layer
+def pruning_edge_hook_all_tokens(prune_mask, attention_constants, mlp_constants, attention_cache, mlp_cache, orig_in, hook):
+    # i is the current layer (0-indexed, equal to the number of layers before this one)
+    # orig_in: batch x seq_pos x d_model
+    # prune_mask[0]: (bsz * n_samples) x i x n_heads
+    # attention_constants: i x n_heads x d_model
+    # attention_cache: i * [(bsz * n_samples) x seq_pos x n_heads x d_model]
+
+    # mlp_constants: (i+1) x d_model
+    # mlp_cache: (i+1) * [(bsz * n_samples) x seq_pos x d_model]
+
+    # (bsz * n_samples) x 1 (seq_pos) x i x n_heads x 1 (d_model)
+    prune_mask[0] = prune_mask[0].unsqueeze(1).unsqueeze(-1)
+
+    # (bsz * n_samples) x 1 (seq_pos) x i x 1 (d_model)
+    prune_mask[1] = prune_mask[1].unsqueeze(1).unsqueeze(-1)
+
+    return ((1-prune_mask[0]) * attention_constants + prune_mask[0] * torch.stack(attention_cache, dim=2)).sum(dim=[2,3]) + ((1-prune_mask[1] * mlp_constants) + prune_mask[1] * torch.stack(mlp_cache, dim=2)).sum(dim=2)
+# %%
+
+circs = ["q", "k", "v"]
+# pruning parameters:
+prune_mask = [
+    # edges for each (attention, mlp) layer
+    *[[
+        # edges into the q, k, v circuits
+        *[
+            [
+                # edges from other attention heads
+                torch.ones((batch_size, i, n_heads)), 
+                # edges from the input and previous MLP layers
+                torch.ones((batch_size, i+1))
+            ]
+            for _ in circs
+        ], 
+        # edges into the mlp layer
+        [
+            # edges from attention heads including current layer
+            torch.ones((batch_size, i+1, n_heads)), 
+            # edges from the input and previous MLP layers
+            torch.ones((batch_size, i+1))
+        ]
+    ] for i in range(n_layers)],
+    # edges for the output node
+    [
+        torch.ones((batch_size, n_layers, n_heads)),
+        torch.ones((batch_size, n_layers+1))
+    ]
+]
+
+# %%
+
+
+
+# %%
+
+batch = next(owt_iter)['tokens']
+
+embed_filter = lambda name: name == f"blocks.{0}.hook_resid_pre"
+attention_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.attn.hook_result"
+mlp_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_mlp_out"
+
+attention_in_filter = lambda layer_no, circ, name: name == f"blocks.{layer_no}.hook_{circ}_input"
+mlp_in_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_mlp_in"
+
+attention_cache = []
+mlp_cache = []
+with torch.no_grad():
+    model.run_with_hooks(batch, fwd_hooks=[
+        (embed_filter, partial(cache_hook_all_tokens, mlp_cache)),
+        *[(partial(attention_points_filter, layer_no), 
+           partial(cache_hook_all_tokens, attention_cache)) for layer_no in range(n_layers)]
+        *[(partial(mlp_points_filter, layer_no), 
+           partial(cache_hook_all_tokens, mlp_cache)) for layer_no in range(n_layers)],
+        
+        *[(partial(attention_in_filter, layer_no, circ), 
+           partial(pruning_edge_hook_all_tokens, prune_mask, attention_constants, mlp_constants, attention_cache, mlp_cache)) for layer_no in range(n_layers) for circ in circs],
+           
+        *[(partial(attention_points_filter, layer_no), 
+            partial(pruning_hook_attention_all_tokens,
+                    modal_values[layer_no],
+                    prune_mask[layer_no],
+                    batch_size)
+        ) for layer_no in range(n_layers)]
+    ])
+
+
+# %%
+# attentions: (batch_size + batch_size * n_samples) x seq_len x n_heads x d_model
+# constants: n_heads x d_model
+# prune mask: (batch_size * n_samples) x n_heads, 0 = prune, 1 = keep
+def pruning_hook_attention_all_tokens(constants, prune_mask, bsz, attentions, hook):
+    # N by 2. First column = batch item, second column = head idx
+    prune_mask = prune_mask.unsqueeze(1).unsqueeze(-1)
+    attentions[bsz:] = (1-prune_mask) * constants + prune_mask * attentions[bsz:].clone()
+
+    # prune_idx = prune_mask.clone()
+    # attentions[bsz + prune_idx[:,0],:,prune_idx[:,1]] = prune_idx * constants[prune_idx[:,1]]
+    return attentions
+
+
+# %%
 # sample pruned heads independently from batch, or use same pruned heads for each batch item?
 # currently using the former
 
@@ -112,18 +220,6 @@ def sample_mask(unif, sampling_params):
 def temp_scheduler(k):
     init = 1/10
     return min(max(k-2000,0) / 20000,1) * init
-# attentions: (batch_size + batch_size * n_samples) x seq_len x n_heads x d_model
-# constants: n_heads x d_model
-# prune mask: (batch_size * n_samples) x n_heads, 0 = prune, 1 = keep
-def pruning_hook_attention_all_tokens(constants, prune_mask, bsz, attentions, hook):
-    # N by 2. First column = batch item, second column = head idx
-    prune_mask = prune_mask.unsqueeze(1).unsqueeze(-1)
-    attentions[bsz:] = (1-prune_mask) * constants + prune_mask * attentions[bsz:].clone()
-
-    # prune_idx = prune_mask.clone()
-    # attentions[bsz + prune_idx[:,0],:,prune_idx[:,1]] = prune_idx * constants[prune_idx[:,1]]
-    return attentions
-
 
 # %%
 

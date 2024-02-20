@@ -12,7 +12,6 @@ from functools import partial
 import torch.optim
 import time
 from itertools import cycle
-from encoders import UntiedEncoder
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
@@ -68,26 +67,23 @@ attention_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.att
 
 # %%
 
-# sample pruned heads independently from batch, or use same pruned heads for each batch item?
-# currently using the former
-
-# %%
-
 # n_heads x 2, first column = location (alpha), second column = scale (beta)
-n_samples = 25
+n_samples = 1
 
-# as in the louizos paper
-starting_beta = 2/3
-hard_concrete_endpoints = (-0.1, 1.1)
+# # as in the louizos paper
+# starting_beta = 2/3
+# hard_concrete_endpoints = (-0.1, 1.1)
 
-# init_params = [torch.stack([torch.ones(n_heads,) * -2, torch.ones(n_heads,) * starting_beta], dim=1).to(device) for _ in range(n_layers)]
+# # init_params = [torch.stack([torch.ones(n_heads,) * -2, torch.ones(n_heads,) * starting_beta], dim=1).to(device) for _ in range(n_layers)]
 
-# last modes
-with open("pruning/pruning_outputs/ioi_spec_modes/train_823.pkl", "rb") as f:
+# # last modes
+with open("pruning/pruning_modes_ioi_missing_modes/train_271.pkl", "rb") as f:
 #     # n_layers x n_heads x d_model
-    init_params = pickle.load(f)
-sampling_params = [torch.nn.Parameter(init_params[i]) for i in range(n_layers)]
-sampling_optimizer = torch.optim.Adam(sampling_params, lr=lr, weight_decay=0)
+    sampling_params = pickle.load(f)
+
+prune_mask = [(sampling_param_layer[:,0] > 0).repeat(batch_size,1) * 1 for sampling_param_layer in sampling_params]
+# sampling_params = [torch.nn.Parameter(init_params[i]) for i in range(n_layers)]
+# sampling_optimizer = torch.optim.Adam(sampling_params, lr=lr, weight_decay=0)
 
 modal_values = [torch.nn.Parameter(init_modes[i]) for i in range(n_layers)]
 modal_optimizer = torch.optim.Adam(modal_values, lr=lr_modes, weight_decay=0)
@@ -98,25 +94,24 @@ modal_optimizer = torch.optim.Adam(modal_values, lr=lr_modes, weight_decay=0)
 # def f_concrete(x, beta, alpha):
 #     return ((x.log() - (1-x).log()) * beta - alpha.log()).sigmoid()
 
-def sample_mask(unif, sampling_params):
-    sampling_params = sampling_params.unsqueeze(1)
+# def sample_mask(unif, sampling_params):
+#     sampling_params = sampling_params.unsqueeze(1)
 
-    # back prop against log alpha
-    concrete = (((.001+unif).log() - (1-unif).log() + sampling_params[:,:,:,0])/(sampling_params[:,:,:,1].relu()+.001)).sigmoid()
+#     # back prop against log alpha
+#     concrete = (((.001+unif).log() - (1-unif).log() + sampling_params[:,:,:,0])/(sampling_params[:,:,:,1].relu()+.001)).sigmoid()
 
-    hard_concrete = ((concrete + hard_concrete_endpoints[0]) * (hard_concrete_endpoints[1] - hard_concrete_endpoints[0])).clamp(0,1)
+#     hard_concrete = ((concrete + hard_concrete_endpoints[0]) * (hard_concrete_endpoints[1] - hard_concrete_endpoints[0])).clamp(0,1)
 
-    # n_layers x (total_samples = batch_size * n_samples) x n_heads
-    return hard_concrete
+#     # n_layers x (total_samples = batch_size * n_samples) x n_heads
+#     return hard_concrete
 
-def temp_scheduler(k):
-    init = 1/10
-    return min(max(k-2000,0) / 20000,1) * init
+# def temp_scheduler(k):
+#     init = 1/10
+#     return min(max(k-2000,0) / 20000,1) * init
 # attentions: (batch_size + batch_size * n_samples) x seq_len x n_heads x d_model
 # constants: n_heads x d_model
 # prune mask: (batch_size * n_samples) x n_heads, 0 = prune, 1 = keep
 def pruning_hook_attention_all_tokens(constants, prune_mask, bsz, attentions, hook):
-    # N by 2. First column = batch item, second column = head idx
     prune_mask = prune_mask.unsqueeze(1).unsqueeze(-1)
     attentions[bsz:] = (1-prune_mask) * constants + prune_mask * attentions[bsz:].clone()
 
@@ -142,8 +137,8 @@ for param in model.parameters():
 # sns.histplot(cum_prune.detach())
 
 # %%
-lp = LinePlot(['kl_loss', 'step_size', 'mode_step_size'])
-lp_2 = LinePlot(['av_alpha', 'complexity_loss', 'temp_loss'])
+lp = LinePlot(['kl_loss', 'mode_step_size'])
+# lp_2 = LinePlot(['av_alpha', 'complexity_loss', 'temp_loss'])
 torch.autograd.set_detect_anomaly(True)
 
 i = 0
@@ -156,12 +151,12 @@ while i < 100000:
     last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(device)).argmax(dim=-1) - 1
 
     modal_optimizer.zero_grad()
-    sampling_optimizer.zero_grad()
+    # sampling_optimizer.zero_grad()
 
     # sample
-    all_sampling_params = torch.stack(sampling_params, dim=0)
-    unif = torch.rand((n_layers, batch_size * n_samples, n_heads)).to(device)
-    prune_mask = sample_mask(unif, all_sampling_params)
+    # all_sampling_params = torch.stack(sampling_params, dim=0)
+    # unif = torch.rand((n_layers, batch_size * n_samples, n_heads)).to(device)
+    # prune_mask = sample_mask(unif, all_sampling_params)
 
     model_results = model.run_with_hooks(
         # first batch_size samples are targets
@@ -194,19 +189,20 @@ while i < 100000:
     # io_loss = target_results - ablated_results
 
     # alphas already logged
-    complexity_loss = (all_sampling_params[:,:,0]-all_sampling_params[:,:,1].relu() * (math.log(-hard_concrete_endpoints[0]/hard_concrete_endpoints[1]))).sigmoid()
-    temperature_loss = all_sampling_params[:,:,1].square().sum()
+    # complexity_loss = (all_sampling_params[:,:,0]-all_sampling_params[:,:,1].relu() * (math.log(-hard_concrete_endpoints[0]/hard_concrete_endpoints[1]))).sigmoid()
+    # temperature_loss = all_sampling_params[:,:,1].square().sum()
 
-    loss = kl_losses.sum() + lamb * complexity_loss.sum() + temp_scheduler(i) * temperature_loss
+    loss = kl_losses.sum() 
+    # + lamb * complexity_loss.sum() + temp_scheduler(i) * temperature_loss
     # loss = io_loss.mean() + lamb * complexity_loss.sum()
 
     loss.backward()
 
-    prev_alphas = all_sampling_params[:,:,0].detach()
-    prev_betas = all_sampling_params[:,:,1].detach()
+    # prev_alphas = all_sampling_params[:,:,0].detach()
+    # prev_betas = all_sampling_params[:,:,1].detach()
     prev_modes = torch.stack(modal_values, dim=0).detach().clone()
 
-    sampling_optimizer.step()
+    # sampling_optimizer.step()
     modal_optimizer.step()
 
     nancount = torch.stack(sampling_params, dim=0).isnan().sum()
@@ -221,22 +217,22 @@ while i < 100000:
         print("NANs", nancount)
         break
     
-    step_sz = (torch.stack(sampling_params, dim=0)[:,:,0] - prev_alphas).abs().sum()
+    # step_sz = (torch.stack(sampling_params, dim=0)[:,:,0] - prev_alphas).abs().sum()
     mode_step_sz = (torch.stack(modal_values, dim=0) - prev_modes).norm(dim=-1).mean()
 
-    lp.add_entry({"kl_loss": kl_losses.mean().item(), "step_size": step_sz.item(), "mode_step_size": mode_step_sz.item()})
-    lp_2.add_entry({"complexity_loss": complexity_loss.sum().item(),
-    "av_alpha": all_sampling_params[:,:,0].mean().item(), 
-    "temp_loss": all_sampling_params[:,:,1].relu().sum().item()})
+    lp.add_entry({"kl_loss": kl_losses.mean().item(), "mode_step_size": mode_step_sz.item()})
+    # lp_2.add_entry({"complexity_loss": complexity_loss.sum().item(),
+    # "av_alpha": all_sampling_params[:,:,0].mean().item(), 
+    # "temp_loss": all_sampling_params[:,:,1].relu().sum().item()})
 
-    if i % 100 == 10:
-        sns.histplot(prune_mask.detach().flatten().cpu())
-        plt.savefig(f"{folder}/mask_{j}.png")
-        plt.close()
+    if i % 1000 == 10:
+        # sns.histplot(prune_mask.detach().flatten().cpu())
+        # plt.savefig(f"{folder}/mask_{j}.png")
+        # plt.close()
 
-        sns.scatterplot(x=all_sampling_params[:,:,0].detach().flatten().cpu(), y=all_sampling_params[:,:,1].detach().flatten().cpu())
-        plt.savefig(f"{folder}/params_{j}.png")
-        plt.close()
+        # sns.scatterplot(x=all_sampling_params[:,:,0].detach().flatten().cpu(), y=all_sampling_params[:,:,1].detach().flatten().cpu())
+        # plt.savefig(f"{folder}/params_{j}.png")
+        # plt.close()
 
         sns.histplot(kl_losses.detach().flatten().cpu())
         plt.savefig(f"{folder}/io_loss_{j}.png")
@@ -244,18 +240,16 @@ while i < 100000:
 
         if i > 0:
             lp.plot(save=f"{folder}/train_{j}.png")
-            lp_2.plot(save=f"{folder}/train_reg_{j}.png")
+            # lp_2.plot(save=f"{folder}/train_reg_{j}.png")
 
-        with open(f"{folder}/train_{j}.pkl", "wb") as f:
-            pickle.dump(sampling_params, f)
         with open(f"{folder}/modes_{j}.pkl", "wb") as f:
             pickle.dump(modal_values, f)
 
         j += 1
     
     print("KL:", kl_losses.mean())
-    print("Complexity:", complexity_loss.sum())
-    print("Temp", temperature_loss.sum())
+    # print("Complexity:", complexity_loss.sum())
+    # print("Temp", temperature_loss.sum())
     i += 1
 
 

@@ -17,20 +17,25 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
 from training_utils import load_model_data, LinePlot
-
+import json
 # %%
 
 # model_name = "EleutherAI/pythia-70m-deduped"
 model_name = "gpt2-small"
-folder = "pruning/pruning_modes_ioi"
+folder = "pruning/pruning_modes_color"
 batch_size = 10
 device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size)
 model.train()
 model.cfg.use_attn_result = True
 
-ioi_ds = datasets.load_from_disk("../plausibleablation/data/ioi/ioi")
-ioi_loader = DataLoader(ioi_ds['train'], batch_size=batch_size, shuffle=True, pin_memory=True)
-ioi_iter = cycle(iter(ioi_loader))
+# %%
+
+with open("color_objects/task.json") as f:
+    color_ds = json.load(f)
+
+# %%
+color_ds_cycle = cycle(color_ds['examples'][:1500])
+
 
 # %%
 # inverse probe setting
@@ -38,8 +43,8 @@ ioi_iter = cycle(iter(ioi_loader))
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 lr = 1e-2
-lr_modes = 5e-4
-lamb = 3
+lr_modes = 1e-3
+lamb = 2
 
 # # learning hyperparameters
 # convergence_tol = 1e-4
@@ -57,7 +62,7 @@ kl_loss = torch.nn.KLDivLoss(reduction="none")
 # with open("pruning/modes/modes_0.pkl", "rb") as f:
 #     # n_layers x n_heads x d_model
 #     modal_values = pickle.load(f)
-with open("pruning/modes/ioi/modes_8.pkl", "rb") as f:
+with open("pruning/modes/modes_23.pkl", "rb") as f:
 #     # n_layers x n_heads x d_model
     init_modes = pickle.load(f)
 
@@ -80,12 +85,12 @@ n_samples = 25
 starting_beta = 2/3
 hard_concrete_endpoints = (-0.1, 1.1)
 
-# init_params = [torch.stack([torch.ones(n_heads,) * -2, torch.ones(n_heads,) * starting_beta], dim=1).to(device) for _ in range(n_layers)]
+init_params = [torch.stack([torch.ones(n_heads,) * -2, torch.ones(n_heads,) * starting_beta], dim=1).to(device) for _ in range(n_layers)]
 
 # last modes
-with open("pruning/pruning_outputs/ioi_spec_modes/train_823.pkl", "rb") as f:
-#     # n_layers x n_heads x d_model
-    init_params = pickle.load(f)
+# with open("pruning/pruning_outputs/ioi_spec_modes/train_823.pkl", "rb") as f:
+# #     # n_layers x n_heads x d_model
+#     init_params = pickle.load(f)
 sampling_params = [torch.nn.Parameter(init_params[i]) for i in range(n_layers)]
 sampling_optimizer = torch.optim.Adam(sampling_params, lr=lr, weight_decay=0)
 
@@ -149,11 +154,10 @@ torch.autograd.set_detect_anomaly(True)
 i = 0
 j = 0
 while i < 100000:
-    batch = next(owt_iter)['tokens'].to(device)
+    # batch = next(owt_iter)['tokens'].to(device)
 
-    b = next(ioi_iter)
-    batch = tokenizer(b['ioi_sentences'], padding=True, return_tensors='pt')['input_ids'].to(device)
-    last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(device)).argmax(dim=-1) - 1
+    batch = tokenizer(["Q: " + next(color_ds_cycle)['input'] + " A: It's a" for _ in range(batch_size)], padding=True, return_tensors='pt')['input_ids'].to(device)
+    last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(device)).argmax(dim=-1)
 
     modal_optimizer.zero_grad()
     sampling_optimizer.zero_grad()
