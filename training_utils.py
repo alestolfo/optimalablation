@@ -124,37 +124,47 @@ class LinePlot:
                 self.stat_book[k].append(self.stat_book[k][-1])
         self.t += 1
     
-    def plot(self, series=None, step=1, start=0, end=0, agg='mean', twinx=True, mv=False, save=None):
+    def plot(self, series=None, subplots=None, step=1, start=0, end=0, agg='mean', twinx=True, mv=False, save=None):
         if series is None:
             series = self.stat_list
         if end <= start:
             end = self.t
         t = [i for i in range(start, end, step)]
         ax = None
-        (h,l) = (None,None)
+        (h,l) = ([],[])
+        colors = ["green", "blue", "red", "orange"]
+        if subplots is not None:
+            rows = (len(series)-1) // subplots + 1
+            f, axes = plt.subplots(rows, subplots, figsize=(rows * 5, subplots * 5))
+            
         for i,s in enumerate(series):
             if agg == 'mean':
                 yvals = [np.mean(self.stat_book[s][i:i+step]) for i in range(start, end, step)]
             else:
                 yvals = [self.stat_book[s][i] for i in range(start, end, step)]
-            if twinx:
-                colors = ["green", "blue", "red", "orange"]
+            if twinx is True:
+                params = {"x": t, "y": yvals, "label": s}
+                if len(self.stat_list) <= 4:
+                    params["color"] = colors[i]
                 if ax is None:
-                    ax = sns.lineplot(x=t, y=yvals, color=colors[i], label=s)
+                    ax = sns.lineplot(**params)
                     h, l = ax.get_legend_handles_labels()
-                    mv_ax = ax
-                else: 
-                    ax2 = sns.lineplot(x=t, y=yvals, ax=ax.twinx(), color=colors[i], label=s)
+                    ax.get_legend().remove()
+                    cur_ax = ax
+                else:
+                    ax2 = sns.lineplot(**params, ax=ax.twinx())
+                    ax2.get_legend().remove()
                     h2, l2 = ax2.get_legend_handles_labels()
                     h += h2
                     l += l2
-                    mv_ax = ax2
+                    cur_ax = ax
             else:
-                ax = sns.lineplot(x=t, y=yvals, label=s)
-                mv_ax = ax
+                if subplots is not None:
+                    ax = sns.lineplot(x=t, y=yvals, label=s, ax=axes[i // subplots, i % subplots])
+                    cur_ax = ax
             if mv:
                 mv_series = [np.mean(yvals[i:min(len(yvals),i+mv)]) for i in range(len(yvals))]
-                sns.lineplot(x=t, y=mv_series, label=f"{s}_mv_{mv}")
+                sns.lineplot(x=t, y=mv_series, label=f"{s}_mv_{mv}", ax=cur_ax)
         if h is None:
             plt.legend()
         else:
@@ -165,7 +175,7 @@ class LinePlot:
             plt.savefig(save)
         plt.show()
         plt.close()
-    
+
     def export():
         pass
 
