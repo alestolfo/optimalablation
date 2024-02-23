@@ -9,7 +9,6 @@ import math
 from functools import partial
 import torch.optim
 import time
-from encoders import UntiedEncoder
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
@@ -17,11 +16,12 @@ from training_utils import load_model_data, save_hook_last_token, LinePlot
 
 # %%
 sns.set()
-folder="modal_lens"
+folder="modal_lens/no_decay"
+shared_bias = False
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"
 model_name = "gpt2-small"
-batch_size = 400
+batch_size = 200
 clip_value = 1e5
 device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size)
 
@@ -52,10 +52,10 @@ prior_bias = [
 
 attn_bias = [
     # torch.nn.Parameter(torch.ones((i+1, d_model)).to(device)) for i in range(n_layers)
-    torch.nn.Parameter(torch.stack(prior_bias[:i+1], dim=0).to(device)) for i in range(n_layers)
+    torch.nn.Parameter((prior_bias[i] if shared_bias else prior_bias[i].repeat(i+1,1)).to(device)) for i in range(n_layers)
 ]
-lens_optimizer = torch.optim.AdamW(attn_bias, lr=lr, weight_decay=1e-3)
-lens_scheduler = torch.optim.lr_scheduler.StepLR(lens_optimizer, step_size=150, gamma=0.9)
+lens_optimizer = torch.optim.AdamW(attn_bias, lr=lr, weight_decay=0)
+# lens_scheduler = torch.optim.lr_scheduler.StepLR(lens_optimizer, step_size=200, gamma=0.9)
 
 for param in model.parameters():
     param.requires_grad = False
@@ -79,14 +79,18 @@ def get_lens_loss(batch, compare_tuned_lens=False):
     )[:,-1].softmax(dim=-1)
 
     # activation_storage: batch x d_model (last token only)
-    # resid: resid x batch x d_model (note: layer norms and unembeds need 3 tensor dimensions)
+    # resid: layer x batch x d_model (note: layer norms and unembeds need 3 tensor dimensions)
     resid = []
     for layer_no in range(n_layers):
         if layer_no > 0:
             resid = torch.cat([resid_mid,activation_storage[layer_no].unsqueeze(0)], dim=0)
         else:
             resid = activation_storage[layer_no].unsqueeze(0)
-        resid_mid = resid + attn_bias[layer_no].unsqueeze(1)
+        if shared_bias:
+            attn_bias_layer = attn_bias[layer_no].unsqueeze(0)
+        else:
+            attn_bias_layer = attn_bias[layer_no]
+        resid_mid = resid + attn_bias_layer.unsqueeze(1)
         normalized_resid_mid = model.blocks[layer_no].ln2(resid_mid)
         mlp_out = model.blocks[layer_no].mlp(normalized_resid_mid)
         resid = resid_mid + mlp_out
@@ -126,27 +130,28 @@ for i in tqdm(range(10000)):
     step_sz = (torch.cat(attn_bias, dim=0)-prev_weights).abs().sum()
     lp.add_entry({"step_size": step_sz.item(), **{f"kl_loss_{k}": kl_losses[k].item() for k in range(n_layers)}})
 
-    lens_scheduler.step()
+    # lens_scheduler.step()
 
     if math.isnan(lp.stat_book["step_size"][-1]):
         break
 
     if i % 500 == 10:
         lp.plot(subplots=3, save=f"{folder}/train.png", twinx=False, mv=20)
-        with open("modal_lens/modal_lens_weights.pkl", "wb") as f:
+        with open(f"{folder}/modal_lens_weights.pkl", "wb") as f:
             pickle.dump(attn_bias, f)
 
 # %%
             
 # modal lens inference
-            
+# folder="modal_lens"
 tuned_lens_folder = "pruning/tuned_lens"
 with open(f"{folder}/modal_lens_weights.pkl", "rb") as f:
     attn_bias = pickle.load(f)
 
-with open(f"{tuned_lens_folder}/rez_weights.pkl", "rb") as f:
+# %%
+with open(f"{tuned_lens_folder}/tuned_lens_weights.pkl", "rb") as f:
     tuned_lens_weights = pickle.load(f)
-with open(f"{tuned_lens_folder}/rez_bias.pkl", "rb") as f:
+with open(f"{tuned_lens_folder}/tuned_lens_bias.pkl", "rb") as f:
     tuned_lens_bias = pickle.load(f)
 
 all_losses = ([],[])
@@ -158,9 +163,6 @@ for i in tqdm(range(100)):
         kl_losses = torch.nan_to_num(kl_losses, nan=0, posinf=0, neginf=0)
         all_losses[0].append(kl_losses)
         all_losses[1].append(tuned_lens_loss)
-
-    if math.isnan(lp.stat_book["step_size"][-1]):
-        break
 
 # %%
     
@@ -187,11 +189,11 @@ for i in range(n_layers):
     min_val = max(cur_ax.get_xlim()[0],cur_ax.get_ylim()[0])
     max_val = min(cur_ax.get_xlim()[1],cur_ax.get_ylim()[1])
     cur_ax.plot([min_val, max_val],[min_val, max_val], color="red", linestyle="-")
-
-
     
-
-
 # %%
-print(torch.stack(all_losses, dim=1).mean(dim=1))
+
+print(modal_lens_loss_pts.mean())
+print(tuned_lens_loss_pts.mean())
+# # %%
+# print(torch.stack(all_losses, dim=1).mean(dim=1))
 # %%
