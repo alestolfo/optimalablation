@@ -1,15 +1,14 @@
 # %%
 import torch
 import datasets
-import os
-from sys import argv
 from torch.utils.data import DataLoader
 from transformer_lens import HookedTransformer
 import numpy as np 
 from tqdm import tqdm
 from fancy_einsum import einsum
-from einops import rearrange
 import math
+from sys import argv
+import os
 from functools import partial
 import torch.optim
 import time
@@ -17,8 +16,8 @@ from itertools import cycle
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from EdgePruner import EdgePruner, PruneMaskJointSampler
 from edge_pruning_config import IOIConfig, GTConfig
+from EdgePruner import EdgePruner, PruneMaskIterativeSampler
 from training_utils import load_model_data, LinePlot
 
 # %%
@@ -39,18 +38,21 @@ kl_loss = torch.nn.KLDivLoss(reduction="none")
 # %%
 
 # settings
-reg_lamb=1000.
-# reg_lamb = float(argv[1])
+reg_lamb = float(argv[1])
+# reg_lamb=50
 gpu_requeue = True
-pretrained=True
 
-folder=f"pruning_edges_auto/ioi_pretrained/{reg_lamb}"
-pretrained_folder = f"pruning_edges_auto/ioi/300.0"
+folder=f"pruning_edges_auto/ioi_iter/{reg_lamb}"
+
 if not os.path.exists(folder):
     os.makedirs(folder)
 
-pruning_cfg = IOIConfig(model.cfg, device, folder)
+pruning_cfg = IOIConfig(model.cfg, device, folder, 0.5)
 pruning_cfg.lamb = reg_lamb
+pruning_cfg.record_every = 50
+pruning_cfg.temp_avg_intv = 5
+pruning_cfg.temp_comp_intv = 20
+pruning_cfg.temp_convergence_target = 200
 
 for param in model.parameters():
     param.requires_grad = False
@@ -75,13 +77,13 @@ def take_snapshot(j):
         pickle.dump((edge_pruner.log, lp_count), f)
 
 # %%
-mask_sampler = PruneMaskJointSampler(pruning_cfg)
-edge_pruner = EdgePruner(model, pruning_cfg, mask_sampler, parallel_inference=False)
+mask_sampler = PruneMaskIterativeSampler(pruning_cfg)
+edge_pruner = EdgePruner(model, pruning_cfg, mask_sampler, ablation_backward=True)
 
-sampling_optimizer = torch.optim.AdamW(mask_sampler.parameters(), lr=pruning_cfg.lr, weight_decay=0)
+sampling_optimizer = torch.optim.AdamW(mask_sampler.parameters(), lr=pruning_cfg.lr, weight_decay=1e-3)
 modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
 
-lp_count = LinePlot(['step_size', 'mode_step_size'])
+lp_count = LinePlot(['total_edges', 'step_size', 'mode_step_size'])
 # %%
 
 if gpu_requeue and os.path.exists(snapshot_path) and os.path.exists(metadata_path):
@@ -94,17 +96,13 @@ if gpu_requeue and os.path.exists(snapshot_path) and os.path.exists(metadata_pat
     with open(metadata_path, "rb") as f:
         main_log, lp_count = pickle.load(f)
     edge_pruner.set_log(main_log)
-elif pretrained:
-    pretrained_snapshot_path = f"{pretrained_folder}/snapshot.pth"
-    print("Loading pretrained weights")
-    previous_state = torch.load(snapshot_path)
-    edge_pruner.load_state_dict(previous_state['pruner_dict'], strict=False)
+else:
+    print("New training run")
+
 
 # %%
-
-max_batches = 3000
+max_batches = 10000
 for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
-
     plotting = no_batches % (-1 * pruning_cfg.record_every) == -1
     checkpointing = no_batches % (-1 * pruning_cfg.checkpoint_every * pruning_cfg.record_every) == -1
 
@@ -130,14 +128,29 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
     with torch.no_grad():
         step_sz = (mask_sampler.get_sampling_params()[:,0] - prev_alphas).abs().sum()
         mode_step_sz = (edge_pruner.get_modes().clone() - prev_modes).norm(dim=-1).mean()
-        lp_count.add_entry({"step_size": step_sz.item(), "mode_step_size": mode_step_sz.item()})
+        lp_count.add_entry({
+            "total_edges": mask_sampler.total_edges - (
+                    mask_sampler.get_sampling_params()[...,0] < 0
+                ).sum().item(), 
+            "step_size": step_sz.item(), 
+            "mode_step_size": mode_step_sz.item()
+        })
 
     if plotting:
         take_snapshot("")
         if checkpointing:
-            take_snapshot(f"-{no_batches}")
-        if edge_pruner.early_term() >= 10:
-            take_snapshot("-final")
+            take_snapshot(f"-{no_batches}")            
+    
+    min_train=100
+    if edge_pruner.log.t - edge_pruner.log.last_tick < min_train:
+        continue
+
+    edge_decline = edge_pruner.log.stat_sig_growth("complexity_loss", avg_intv=10, comp_intv=40)
+    if edge_decline is not False and edge_decline[0] < .03:
+        print("DONE WITH", mask_sampler.component_type, mask_sampler.cur_layer)
+        mask_sampler.freeze_params()
+        if not mask_sampler.next_layer():
             break
+        edge_pruner.log.last_tick = edge_pruner.log.t
 
 # %%

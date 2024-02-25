@@ -12,7 +12,6 @@ from functools import partial
 import torch.optim
 import time
 from itertools import cycle
-from encoders import UntiedEncoder
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle

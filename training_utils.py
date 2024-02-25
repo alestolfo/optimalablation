@@ -108,10 +108,12 @@ def tuned_lens_hook(activation_storage, tuned_lens_weights, tuned_lens_bias, act
     return act
 
 class LinePlot:
-    def __init__(self, stat_list):
+    def __init__(self, stat_list, pref_start=100):
         self.stat_list = stat_list
         self.stat_book = {x: [] for x in stat_list}
         self.t = 0
+        self.last_tick = 0
+        self.early_term_count = 0
     
     def add_entry(self, entry):
         for k in self.stat_book:
@@ -124,11 +126,22 @@ class LinePlot:
                 self.stat_book[k].append(self.stat_book[k][-1])
         self.t += 1
     
-    def plot(self, series=None, subplots=None, step=1, start=0, end=0, agg='mean', twinx=True, mv=False, save=None):
+    def stat_sig_growth(self, series, avg_intv=20, comp_intv=200, start_t=0):
+        if self.t - start_t <= comp_intv + avg_intv + 1:
+            return False
+        historical_avg = [np.mean(self.stat_book[series][-i-avg_intv-1:-i-1]) for i in range(0, comp_intv, (avg_intv // 4))]
+        rolling_avg = historical_avg[0]
+
+        # decline, growth
+        return 1 - rolling_avg / np.quantile(historical_avg, .05), rolling_avg / np.quantile(historical_avg, .95) - 1
+        
+    def plot(self, series=None, subplots=None, step=1, start=100, end=0, agg='mean', twinx=True, mv=False, save=None):
         if series is None:
             series = self.stat_list
         if end <= start:
             end = self.t
+            if end <= start:
+                start = 0
         t = [i for i in range(start, end, step)]
         ax = None
         (h,l) = ([],[])
@@ -144,7 +157,7 @@ class LinePlot:
                 yvals = [self.stat_book[s][i] for i in range(start, end, step)]
             if twinx is True:
                 params = {"x": t, "y": yvals, "label": s}
-                if len(self.stat_list) <= 4:
+                if len(series) <= 4:
                     params["color"] = colors[i]
                 if ax is None:
                     ax = sns.lineplot(**params)

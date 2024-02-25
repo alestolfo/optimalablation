@@ -6,7 +6,6 @@ from tqdm import tqdm
 from fancy_einsum import einsum
 from einops import rearrange
 import math
-from encoders import UntiedEncoder
 from functools import partial
 import torch.optim
 import time

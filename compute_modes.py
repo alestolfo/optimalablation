@@ -12,7 +12,6 @@ from functools import partial
 import torch.optim
 import time
 from torch.utils.data import DataLoader
-from encoders import UntiedEncoder
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
@@ -23,10 +22,11 @@ from training_utils import load_model_data, LinePlot
 # dataset settings
 
 means_only=True
+include_mlp=True
 means_by_seq_pos=False
-dataset="ioi"
+dataset="owt"
 init_modes_path = f"pruning/modes/ioi/modes_5.pkl"
-folder = "pruning_edges/modes/ioi"
+folder = "pruning_edges/modes/owt"
 
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"
@@ -58,8 +58,10 @@ lr = 2e-3
 # relu = torch.nn.ReLU()
 kl_loss = torch.nn.KLDivLoss(reduction="none")
 
+embed_filter = lambda name: name == f"blocks.{0}.hook_resid_pre"
 resid_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_resid_pre"
 attention_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.attn.hook_result"
+mlp_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_mlp_out"
 
 # %%
 
@@ -99,12 +101,15 @@ def ablation_hook_attention_all_tokens(constants, bsz, attentions, hook):
     #     print(attentions[:bsz][(attentions[:bsz].abs() > 500)])
     return attentions
 
-def mean_activation_hook(means_by_seq_pos, last_token_pos, attentions, hook):
+def mean_activation_hook(means_by_seq_pos, last_token_pos, activation_storage, activations, hook):
     # # ignore first token because it is crazy
     with torch.no_grad():
         if last_token_pos is not None:
-            indic_sample = (torch.arange(attentions.shape[1]).repeat(attentions.shape[0],1).to(device) <= last_token_pos.unsqueeze(1)).unsqueeze(-1).unsqueeze(-1)
-            repr = (attentions * indic_sample)
+            indic_sample = (torch.arange(activations.shape[1]).repeat(activations.shape[0],1).to(device) <= last_token_pos.unsqueeze(1))
+            # activations have bsz x seq_pos x head_dim x d_model (4 dimensions), mlp outputs have 3 dimensions
+            while len(activations.shape) > len(indic_sample.shape):
+                indic_sample = indic_sample.unsqueeze(-1)
+            repr = (activations * indic_sample)
             if means_by_seq_pos:
                 early_pos = repr[:,:9].sum(dim=0) / indic_sample[:,:9].sum(dim=0)
                 late_pos = (repr[:,9:].sum(dim=[0,1]) / indic_sample[:,9:].sum(dim=[0,1])).unsqueeze(0)
@@ -112,10 +117,10 @@ def mean_activation_hook(means_by_seq_pos, last_token_pos, attentions, hook):
             else:
                 activation_storage.append(repr[:,1:].sum(dim=[0,1]) / indic_sample[:,1:].sum(dim=[0,1]))
         elif means_by_seq_pos:
-            activation_storage.append(attentions.mean(dim=0))
+            activation_storage.append(activations.mean(dim=0))
         else:
-            activation_storage.append(attentions.mean(dim=[0,1]))
-    return attentions
+            activation_storage.append(activations.mean(dim=[0,1]))
+    return activations
 
 
 # %%
@@ -131,12 +136,14 @@ if means_only:
     if means_by_seq_pos:
         # tokens 0-9 individually
         running_means = torch.zeros((n_layers, 10, n_heads, d_model)).to(device)
+        running_mlp_means = torch.zeros((n_layers+1, d_model)).to(device)
     else:
         running_means = torch.zeros((n_layers, n_heads, d_model)).to(device)
+        running_mlp_means = torch.zeros((n_layers+1, d_model)).to(device)
 
 model.eval()
 # %%
-for i in tqdm(range(100)):
+for i in tqdm(range(1000)):
     # modify depending on the dataset
 
     if dataset == "ioi":
@@ -149,20 +156,39 @@ for i in tqdm(range(100)):
     if means_only:
         activation_storage = []
 
-        model_results = model.run_with_hooks(
-                batch,
-                fwd_hooks=[
-                    *[(partial(attention_points_filter, layer_no), 
+        fwd_hooks = [*[(partial(attention_points_filter, layer_no), 
                     partial(mean_activation_hook,
                             means_by_seq_pos,
-                            last_token_pos if dataset == "ioi" else None)
-                        ) for layer_no in range(n_layers)],
-                    ]
+                            last_token_pos if dataset == "ioi" else None,
+                            activation_storage)
+                        ) for layer_no in range(n_layers)]]
+        if include_mlp:
+            mlp_storage = []
+            fwd_hooks.append((embed_filter, 
+                    partial(mean_activation_hook,
+                            means_by_seq_pos,
+                            last_token_pos if dataset == "ioi" else None,
+                            mlp_storage)
+                        ))
+            fwd_hooks = fwd_hooks + [*[(partial(mlp_points_filter, layer_no), 
+                    partial(mean_activation_hook,
+                            means_by_seq_pos,
+                            last_token_pos if dataset == "ioi" else None,
+                            mlp_storage)
+                        ) for layer_no in range(n_layers)]]
+
+        model_results = model.run_with_hooks(
+                batch,
+                fwd_hooks=fwd_hooks
         )
         activation_storage = torch.stack(activation_storage, dim=0)
-
         with torch.no_grad():
             running_means = (i * running_means + activation_storage) / (i + 1)
+        if include_mlp:
+            mlp_storage = torch.stack(mlp_storage, dim=0)
+            with torch.no_grad():
+                running_mlp_means = (i * running_mlp_means + mlp_storage) / (i + 1)
+
     else:
         modal_optimizer.zero_grad()
 
@@ -252,10 +278,13 @@ for i in tqdm(range(100)):
             j += 1
 
     i += 1
+    
 # %%
 if means_only:
-    with open(f"{folder}/means_dumpster.pkl", "wb") as f:
+    with open(f"{folder}/means_attention.pkl", "wb") as f:
         pickle.dump(running_means,f)
+    with open(f"{folder}/means_mlp.pkl", "wb") as f:
+        pickle.dump(running_mlp_means,f)
 
 
 # %%
