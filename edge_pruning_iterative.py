@@ -16,8 +16,10 @@ from itertools import cycle
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from edge_pruning_config import IOIConfig, GTConfig
-from EdgePruner import EdgePruner, PruneMaskIterativeSampler
+from MaskConfig import EdgeInferenceConfig
+from task_datasets import IOIConfig, GTConfig
+from EdgePruner import EdgePruner
+from MaskSampler import EdgeMaskIterativeSampler
 from training_utils import load_model_data, LinePlot
 
 # %%
@@ -38,8 +40,10 @@ kl_loss = torch.nn.KLDivLoss(reduction="none")
 # %%
 
 # settings
-reg_lamb = float(argv[1])
-# reg_lamb=50
+try:
+    reg_lamb = float(argv[1])
+except:
+    reg_lamb=3e-3
 gpu_requeue = True
 
 folder=f"pruning_edges_auto/ioi_iter/{reg_lamb}"
@@ -47,66 +51,48 @@ folder=f"pruning_edges_auto/ioi_iter/{reg_lamb}"
 if not os.path.exists(folder):
     os.makedirs(folder)
 
-pruning_cfg = IOIConfig(model.cfg, device, folder, 0.5)
+pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=0)
 pruning_cfg.lamb = reg_lamb
 pruning_cfg.record_every = 50
 pruning_cfg.temp_avg_intv = 5
 pruning_cfg.temp_comp_intv = 20
 pruning_cfg.temp_convergence_target = 200
 
+task_ds = IOIConfig(pruning_cfg.batch_size, device)
+
 for param in model.parameters():
     param.requires_grad = False
 
 # %%
-    
-snapshot_path = f"{pruning_cfg.folder}/snapshot.pth"
-metadata_path = f"{pruning_cfg.folder}/metadata.pkl"
+mask_sampler = EdgeMaskIterativeSampler(pruning_cfg)
+edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, ablation_backward=True)
+edge_pruner.log.pref_start = 0
+edge_pruner.add_cache_hooks()
+edge_pruner.base_model.add_hook(*edge_pruner.patching_hooks["patch_final"])
 
-def take_snapshot(j):
-    lp_count.plot(save=f"{pruning_cfg.folder}/train-step{j}.png")
-
-    pruner_dict = edge_pruner.state_dict()
-    pruner_dict = {k: pruner_dict[k] for k in pruner_dict if not k.startswith("base_model")}
-    torch.save({
-        'pruner_dict': pruner_dict,
-        'sampling_optim_dict': sampling_optimizer.state_dict(),
-        'modal_optim_dict': modal_optimizer.state_dict(),
-    }, snapshot_path)
-
-    with open(metadata_path, "wb") as f:
-        pickle.dump((edge_pruner.log, lp_count), f)
-
-# %%
-mask_sampler = PruneMaskIterativeSampler(pruning_cfg)
-edge_pruner = EdgePruner(model, pruning_cfg, mask_sampler, ablation_backward=True)
-
-sampling_optimizer = torch.optim.AdamW(mask_sampler.parameters(), lr=pruning_cfg.lr, weight_decay=1e-3)
+sampling_optimizer = torch.optim.AdamW(mask_sampler.parameters(), lr=pruning_cfg.lr, weight_decay=0)
 modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
 
-lp_count = LinePlot(['total_edges', 'step_size', 'mode_step_size'])
 # %%
 
-if gpu_requeue and os.path.exists(snapshot_path) and os.path.exists(metadata_path):
-    print("Loading previous training run")
-    previous_state = torch.load(snapshot_path)
-    edge_pruner.load_state_dict(previous_state['pruner_dict'], strict=False)
-    sampling_optimizer.load_state_dict(previous_state['sampling_optim_dict'])
-    modal_optimizer.load_state_dict(previous_state['modal_optim_dict'])
+lp_count = pruning_cfg.load_snapshot(edge_pruner, sampling_optimizer, modal_optimizer, gpu_requeue, pretrained_folder=None)
+lp_count.pref_start = 0
 
-    with open(metadata_path, "rb") as f:
-        main_log, lp_count = pickle.load(f)
-    edge_pruner.set_log(main_log)
-else:
-    print("New training run")
+if lp_count.stat_list[-1] != "total_edges":
+    lp_count.stat_list.append("total_edges")
+    lp_count.stat_book["total_edges"] = []
 
+take_snapshot = partial(pruning_cfg.take_snapshot, edge_pruner, lp_count, sampling_optimizer, modal_optimizer)
 
 # %%
-max_batches = 10000
+max_batches = 20000
+finish_count = 0
+print(edge_pruner.log.t)
 for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
     plotting = no_batches % (-1 * pruning_cfg.record_every) == -1
     checkpointing = no_batches % (-1 * pruning_cfg.checkpoint_every * pruning_cfg.record_every) == -1
 
-    batch, last_token_pos = pruning_cfg.next_batch(tokenizer)
+    batch, last_token_pos = task_ds.next_batch(tokenizer)
     last_token_pos = last_token_pos.int()
 
     modal_optimizer.zero_grad()
@@ -114,8 +100,8 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     # sample prune mask
     graph_suffix = f"-{no_batches}" if checkpointing else "" if plotting else None
-    loss, all_sampling_params = edge_pruner(batch, last_token_pos, graph_suffix)
-    loss.backward()
+    loss, all_sampling_params = edge_pruner(batch, last_token_pos, graph_suffix, complexity_mean=True, timing=False)
+    loss.mean().backward()
 
     prev_alphas = all_sampling_params[:,0].detach().clone()
     prev_modes = edge_pruner.get_modes().detach().clone()
@@ -126,12 +112,13 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
     mask_sampler.fix_nans()
 
     with torch.no_grad():
-        step_sz = (mask_sampler.get_sampling_params()[:,0] - prev_alphas).abs().sum()
+        step_sz = (mask_sampler.get_sampling_params()[:,0] - prev_alphas).abs()
+        step_sz = (step_sz - 1e-3).relu().sum() / (step_sz > 1e-3).sum()
         mode_step_sz = (edge_pruner.get_modes().clone() - prev_modes).norm(dim=-1).mean()
+        edges_ablated = (mask_sampler.get_sampling_params()[...,0] < -1).sum().item()
+        edges_kept = (mask_sampler.get_sampling_params()[...,0] >= -1).sum().item()
         lp_count.add_entry({
-            "total_edges": mask_sampler.total_edges - (
-                    mask_sampler.get_sampling_params()[...,0] < 0
-                ).sum().item(), 
+            "total_edges": mask_sampler.total_edges - edges_ablated, 
             "step_size": step_sz.item(), 
             "mode_step_size": mode_step_sz.item()
         })
@@ -139,18 +126,39 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
     if plotting:
         take_snapshot("")
         if checkpointing:
-            take_snapshot(f"-{no_batches}")            
-    
-    min_train=100
+            take_snapshot(f"-{no_batches}")      
+
+    min_train=40
+
     if edge_pruner.log.t - edge_pruner.log.last_tick < min_train:
         continue
 
-    edge_decline = edge_pruner.log.stat_sig_growth("complexity_loss", avg_intv=10, comp_intv=40)
-    if edge_decline is not False and edge_decline[0] < .03:
-        print("DONE WITH", mask_sampler.component_type, mask_sampler.cur_layer)
-        mask_sampler.freeze_params()
-        if not mask_sampler.next_layer():
-            break
-        edge_pruner.log.last_tick = edge_pruner.log.t
+    edge_decline = edge_pruner.log.stat_sig_growth("complexity_loss", avg_intv=6, comp_intv=30)
+    if edge_decline is not False and edge_decline[1] < 0 and (edge_decline[0] < .03 or edge_decline[0] * edges_kept < 5) and edge_pruner.log.stat_book['temp'][-1] < 1e-2:
+        finish_count += 1
+        if edges_kept <= 10 or finish_count >= 20:
+            finish_count = 0
+            print("DONE WITH", mask_sampler.component_type, mask_sampler.cur_layer)
+            pruning_cfg.reset_temp()
+            mask_sampler.freeze_params()
+            if not mask_sampler.next_layer():
+                break
+            component_type, cur_layer = mask_sampler.layers_to_prune[mask_sampler.layer_idx]
+            if component_type == "attn":
+                for circ in edge_pruner.circs:
+                    hook_name = f"patch_attn_{cur_layer}_{circ}"
+                    edge_pruner.base_model.add_hook(*edge_pruner.patching_hooks[hook_name])
+            if component_type == "mlp":
+                hook_name = f"patch_mlp_{cur_layer}"
+                edge_pruner.base_model.add_hook(*edge_pruner.patching_hooks[hook_name])
+            print((mask_sampler.get_sampling_params()[...,0] >= 0).sum().item())
+            edge_pruner.log.last_tick = edge_pruner.log.t
+    else:
+        finish_count = 0
 
+# %%
+
+# prune_mask = {k : [((ts[...,0] > 0) * 1).unsqueeze(0) for ts in mask_sampler.sampling_params[k]] for k in mask_sampler.sampling_params}
+# with open('pruning_edges_auto/ioi_iter_round_1/0.001/mask-status.pkl', "wb") as f:
+#     pickle.dump((4, prune_mask), f)
 # %%

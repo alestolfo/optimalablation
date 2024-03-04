@@ -13,12 +13,15 @@ import math
 from functools import partial
 import torch.optim
 import time
+import argparse
 from itertools import cycle
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from EdgePruner import EdgePruner, PruneMaskJointSampler
-from edge_pruning_config import IOIConfig, GTConfig
+from EdgePruner import EdgePruner
+from MaskSampler import EdgeMaskJointSampler
+from MaskConfig import EdgeInferenceConfig
+from task_datasets import IOIConfig, GTConfig
 from training_utils import load_model_data, LinePlot
 
 # %%
@@ -33,82 +36,81 @@ model.cfg.use_hook_mlp_in = True
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
-# relu = torch.nn.ReLU()
-kl_loss = torch.nn.KLDivLoss(reduction="none")
-
 # %%
 
-# settings
-reg_lamb=1000.
-# reg_lamb = float(argv[1])
-gpu_requeue = True
-pretrained=True
+try:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-l', '--lamb',
+                        help='regularization constant')
+    parser.add_argument('-s', '--subfolder',
+                        help='where to save stuff')
+    args = parser.parse_args()
+    reg_lamb = float(args.lamb)
+    subfolder = args.subfolder
+except:
+    reg_lamb = None
+    subfolder = None
 
-folder=f"pruning_edges_auto/ioi_pretrained/{reg_lamb}"
-pretrained_folder = f"pruning_edges_auto/ioi/300.0"
+if reg_lamb is None:
+    reg_lamb = 4e-4
+
+node_reg=5e-3
+gpu_requeue = True
+# reset_optim = 1000
+
+print(reg_lamb)
+
+if subfolder is not None:
+    folder=f"pruning_edges_auto/ioi_reinit_lr/{subfolder}"
+else:
+    folder=f"pruning_edges_auto/ioi_reinit_lr/{reg_lamb}"
+
+pretrained_folder = None
+# f"pruning_edges_auto/ioi/300.0"
 if not os.path.exists(folder):
     os.makedirs(folder)
 
-pruning_cfg = IOIConfig(model.cfg, device, folder)
+pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=0)
 pruning_cfg.lamb = reg_lamb
+pruning_cfg.lr_modes = 1e-2
+
+task_ds = IOIConfig(pruning_cfg.batch_size, device)
 
 for param in model.parameters():
     param.requires_grad = False
 
 # %%
-    
-snapshot_path = f"{pruning_cfg.folder}/snapshot.pth"
-metadata_path = f"{pruning_cfg.folder}/metadata.pkl"
 
-def take_snapshot(j):
-    lp_count.plot(save=f"{pruning_cfg.folder}/train-step{j}.png")
-
-    pruner_dict = edge_pruner.state_dict()
-    pruner_dict = {k: pruner_dict[k] for k in pruner_dict if not k.startswith("base_model")}
-    torch.save({
-        'pruner_dict': pruner_dict,
-        'sampling_optim_dict': sampling_optimizer.state_dict(),
-        'modal_optim_dict': modal_optimizer.state_dict(),
-    }, snapshot_path)
-
-    with open(metadata_path, "wb") as f:
-        pickle.dump((edge_pruner.log, lp_count), f)
+# prune_retrain = True
+# prune_length = 200
+# retrain_length = 100
 
 # %%
-mask_sampler = PruneMaskJointSampler(pruning_cfg)
-edge_pruner = EdgePruner(model, pruning_cfg, mask_sampler, parallel_inference=False)
+mask_sampler = EdgeMaskJointSampler(pruning_cfg)
+edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, parallel_inference=True, node_reg=node_reg)
+edge_pruner.add_cache_hooks()
+edge_pruner.add_patching_hooks()
 
 sampling_optimizer = torch.optim.AdamW(mask_sampler.parameters(), lr=pruning_cfg.lr, weight_decay=0)
 modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
 
-lp_count = LinePlot(['step_size', 'mode_step_size'])
 # %%
 
-if gpu_requeue and os.path.exists(snapshot_path) and os.path.exists(metadata_path):
-    print("Loading previous training run")
-    previous_state = torch.load(snapshot_path)
-    edge_pruner.load_state_dict(previous_state['pruner_dict'], strict=False)
-    sampling_optimizer.load_state_dict(previous_state['sampling_optim_dict'])
-    modal_optimizer.load_state_dict(previous_state['modal_optim_dict'])
+lp_count = pruning_cfg.load_snapshot(edge_pruner, sampling_optimizer, modal_optimizer, gpu_requeue, pretrained_folder=None)
 
-    with open(metadata_path, "rb") as f:
-        main_log, lp_count = pickle.load(f)
-    edge_pruner.set_log(main_log)
-elif pretrained:
-    pretrained_snapshot_path = f"{pretrained_folder}/snapshot.pth"
-    print("Loading pretrained weights")
-    previous_state = torch.load(snapshot_path)
-    edge_pruner.load_state_dict(previous_state['pruner_dict'], strict=False)
-
+take_snapshot = partial(pruning_cfg.take_snapshot, edge_pruner, lp_count, sampling_optimizer, modal_optimizer)
 # %%
+# if prune_retrain and edge_pruner.log.t == 0:
+#     edge_pruner.log.mode = "prune"
+#     edge_pruner.log.cur_counter = 0
 
-max_batches = 3000
+max_batches = 10000
 for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     plotting = no_batches % (-1 * pruning_cfg.record_every) == -1
     checkpointing = no_batches % (-1 * pruning_cfg.checkpoint_every * pruning_cfg.record_every) == -1
 
-    batch, last_token_pos = pruning_cfg.next_batch(tokenizer)
+    batch, last_token_pos = task_ds.next_batch(tokenizer)
     last_token_pos = last_token_pos.int()
 
     modal_optimizer.zero_grad()
@@ -122,13 +124,28 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
     prev_alphas = all_sampling_params[:,0].detach().clone()
     prev_modes = edge_pruner.get_modes().detach().clone()
 
+    # if prune_retrain:
+    #     edge_pruner.log.cur_counter += 1
+    #     if edge_pruner.log.mode == "prune":
+    #         sampling_optimizer.step()
+
+    #         if edge_pruner.log.cur_counter >= prune_length:
+    #             edge_pruner.log.cur_counter = 0
+    #             edge_pruner.log.mode = "retrain"
+    #             modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
+
+    #     elif edge_pruner.log.cur_counter >= retrain_length:
+    #         edge_pruner.log.cur_counter = 0
+    #         edge_pruner.log.mode = "prune"
+    # else:
     sampling_optimizer.step()
     modal_optimizer.step()
 
     mask_sampler.fix_nans()
 
     with torch.no_grad():
-        step_sz = (mask_sampler.get_sampling_params()[:,0] - prev_alphas).abs().sum()
+        step_sz = (mask_sampler.get_sampling_params()[:,0] - prev_alphas).abs()
+        step_sz = (step_sz - 1e-3).relu().sum() / (step_sz > 1e-3).sum()
         mode_step_sz = (edge_pruner.get_modes().clone() - prev_modes).norm(dim=-1).mean()
         lp_count.add_entry({"step_size": step_sz.item(), "mode_step_size": mode_step_sz.item()})
 
@@ -139,5 +156,7 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
         if edge_pruner.early_term() >= 10:
             take_snapshot("-final")
             break
-
+    
+    # if reset_optim is not None and no_batches % (-1 * reset_optim) == -1:
+    #     modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
 # %%

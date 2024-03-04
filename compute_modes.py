@@ -16,7 +16,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
 from training_utils import load_model_data, LinePlot
-
+from task_datasets import GTConfig
 # %%
 
 # dataset settings
@@ -24,9 +24,9 @@ from training_utils import load_model_data, LinePlot
 means_only=True
 include_mlp=True
 means_by_seq_pos=False
-dataset="owt"
-init_modes_path = f"pruning/modes/ioi/modes_5.pkl"
-folder = "pruning_edges/modes/owt"
+dataset="gt"
+init_modes_path = f"pruning/modes/means_dumpster.pkl"
+folder = "pruning_edges/modes/gt"
 
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"
@@ -40,6 +40,9 @@ if dataset == "ioi":
     ioi_ds = datasets.load_from_disk("../plausibleablation/data/ioi/ioi")
     ioi_loader = DataLoader(ioi_ds['train'], batch_size=batch_size, shuffle=True, pin_memory=True)
     ioi_iter = cycle(iter(ioi_loader))
+
+# %%
+task_ds = GTConfig(model.cfg, device, folder, tokenizer)
 
 # %%
 # inverse probe setting
@@ -150,6 +153,8 @@ for i in tqdm(range(1000)):
         b = next(ioi_iter)
         batch = tokenizer(b['ioi_sentences'], padding=True, return_tensors='pt')['input_ids'].to(device)
         last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(device)).argmax(dim=-1) - 1
+    elif dataset == "gt":
+        batch, last_token_pos = task_ds.next_batch(tokenizer)
     else:
         batch = next(owt_iter)['tokens']
     

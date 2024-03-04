@@ -16,17 +16,14 @@ def load_model_data(model_name, batch_size=8, ctx_length=25, repeats=True, ds_na
     device = torch.device(device if torch.cuda.is_available() else "cpu")
     model = HookedTransformer.from_pretrained(model_name, device=device)
     tokenizer = model.tokenizer
-    try:
-        if ds_name:
-            owt_loader = retrieve_owt_data(batch_size, ctx_length, tokenizer, ds_name=ds_name)
-        else:
-            owt_loader = retrieve_owt_data(batch_size, ctx_length, tokenizer)
-        if repeats:
-            owt_iter = cycle(owt_loader)
-        else:
-            owt_iter = owt_loader
-    except:
-        owt_iter = None
+    if ds_name:
+        owt_loader = retrieve_owt_data(batch_size, ctx_length, tokenizer, ds_name=ds_name)
+    else:
+        owt_loader = retrieve_owt_data(batch_size, ctx_length, tokenizer)
+    if repeats:
+        owt_iter = cycle(owt_loader)
+    else:
+        owt_iter = owt_loader
     return device, model, tokenizer, owt_iter
 
 # %%
@@ -111,13 +108,10 @@ def tuned_lens_hook(activation_storage, tuned_lens_weights, tuned_lens_bias, act
     return act
 
 class LinePlot:
-    def __init__(self, stat_list, pref_start=100):
+    def __init__(self, stat_list):
         self.stat_list = stat_list
         self.stat_book = {x: [] for x in stat_list}
         self.t = 0
-        self.last_tick = 0
-        self.early_term_count = 0
-        self.pref_start = pref_start
     
     def add_entry(self, entry):
         for k in self.stat_book:
@@ -130,60 +124,37 @@ class LinePlot:
                 self.stat_book[k].append(self.stat_book[k][-1])
         self.t += 1
     
-    def stat_sig_growth(self, series, avg_intv=10, comp_intv=200, start_t=0):
-        if self.t - start_t <= comp_intv + avg_intv + 1:
-            return False
-        historical_avg = [np.mean(self.stat_book[series][-i-avg_intv-1:-i-1]) for i in range(comp_intv // 2, comp_intv, (avg_intv // 3))]
-        rolling_avg = np.mean(self.stat_book[series][-avg_intv:])
-
-        # decline, growth
-        return 1 - rolling_avg / np.quantile(historical_avg, .1), rolling_avg / np.quantile(historical_avg, .9) - 1
-        
-    def plot(self, series=None, subplots=None, step=1, start=None, end=0, agg='mean', twinx=True, mv=False, save=None):
-        if start is None:
-            start = self.pref_start
+    def plot(self, series=None, step=1, start=0, end=0, agg='mean', twinx=True, mv=False, save=None):
         if series is None:
             series = self.stat_list
         if end <= start:
             end = self.t
-            if end <= start:
-                start = 0
         t = [i for i in range(start, end, step)]
         ax = None
-        (h,l) = ([],[])
-        colors = ["green", "blue", "red", "orange"]
-        if subplots is not None:
-            rows = (len(series)-1) // subplots + 1
-            f, axes = plt.subplots(rows, subplots, figsize=(rows * 5, subplots * 5))
-            
+        (h,l) = (None,None)
         for i,s in enumerate(series):
             if agg == 'mean':
                 yvals = [np.mean(self.stat_book[s][i:i+step]) for i in range(start, end, step)]
             else:
                 yvals = [self.stat_book[s][i] for i in range(start, end, step)]
-            if twinx is True:
-                params = {"x": t, "y": yvals, "label": s}
-                if len(series) <= 4:
-                    params["color"] = colors[i]
+            if twinx:
+                colors = ["green", "blue", "red", "orange"]
                 if ax is None:
-                    ax = sns.lineplot(**params)
+                    ax = sns.lineplot(x=t, y=yvals, color=colors[i], label=s)
                     h, l = ax.get_legend_handles_labels()
-                    ax.get_legend().remove()
-                    cur_ax = ax
-                else:
-                    ax2 = sns.lineplot(**params, ax=ax.twinx())
-                    ax2.get_legend().remove()
+                    mv_ax = ax
+                else: 
+                    ax2 = sns.lineplot(x=t, y=yvals, ax=ax.twinx(), color=colors[i], label=s)
                     h2, l2 = ax2.get_legend_handles_labels()
                     h += h2
                     l += l2
-                    cur_ax = ax
+                    mv_ax = ax2
             else:
-                if subplots is not None:
-                    ax = sns.lineplot(x=t, y=yvals, label=s, ax=axes[i // subplots, i % subplots])
-                    cur_ax = ax
+                ax = sns.lineplot(x=t, y=yvals, label=s)
+                mv_ax = ax
             if mv:
                 mv_series = [np.mean(yvals[i:min(len(yvals),i+mv)]) for i in range(len(yvals))]
-                sns.lineplot(x=t, y=mv_series, label=f"{s}_mv_{mv}", ax=cur_ax)
+                sns.lineplot(x=t, y=mv_series, label=f"{s}_mv_{mv}")
         if h is None:
             plt.legend()
         else:
@@ -194,7 +165,7 @@ class LinePlot:
             plt.savefig(save)
         plt.show()
         plt.close()
-
+    
     def export():
         pass
 

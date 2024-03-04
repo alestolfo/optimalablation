@@ -4,8 +4,10 @@ from sys import argv
 import numpy as np 
 from tqdm import tqdm
 import torch.optim
+import os
 import seaborn as sns
 import pickle
+import glob
 from EdgePruner import EdgePruner
 from MaskSampler import ConstantMaskSampler
 from MaskConfig import EdgeInferenceConfig
@@ -31,8 +33,8 @@ try:
 except:
     reg_lamb=1e-4
 
-folder=f"pruning_edges_auto/ioi_reinit_lr/{reg_lamb}"
-out_path=f"pruning_edges_auto/ioi_reinit_lr/report/{str(reg_lamb).replace('.', '-')}.pkl"
+folder=f"pruning_edges_auto/ioi_iter"
+out_path=f"pruning_edges_auto/ioi_iter/pre_training.pkl"
 
 batch_size = 50
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
@@ -45,49 +47,54 @@ for param in model.parameters():
 
 # %%
 mask_sampler = ConstantMaskSampler()
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
+edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True, ablation_backward=True)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
 # %%
-prune_mask, state_dict = retrieve_mask(folder, state_dict=True)
-all_alphas = torch.cat([ts.flatten() for k in prune_mask for ts in prune_mask[k]], dim=0)
-sorted_values, _ = torch.sort(all_alphas)
-sns.histplot(sorted_values.cpu())
+log = {"lamb": [], "tau": [], "losses": [], "edges": [], "clipped_edges": []}
 
-print(state_dict.keys())
-
-edge_pruner.load_state_dict(state_dict, strict=False)
-
-# %%
-
-# # evaluate loss
-prev_edges = 0
-cand_taus = [-2+x*0.4 for x in range(0,10)]
-log = {"tau": [], "edges": [], "clipped_edges": [], "losses": []}
-
-for tau in tqdm(cand_taus):
-    discrete_mask = discretize_mask(prune_mask, tau)
-    cpm, edges, clipped_edges, _, _ = prune_dangling_edges(discrete_mask)
-    if clipped_edges == prev_edges:
+for lamb_path in glob.glob(f"{folder}/*"):
+    lamb = lamb_path.split("/")[-1]
+    print(lamb)
+    try:
+        float(lamb)
+    except:
         continue
-    prev_edges = edges
-    log['tau'].append(tau)
-    mask_sampler.set_mask(cpm)
-    kl_losses = []
+
+    prune_mask, state_dict = retrieve_mask(lamb_path, state_dict=True)
+    all_alphas = torch.cat([ts.flatten() for k in prune_mask for ts in prune_mask[k]], dim=0)
+    sorted_values, _ = torch.sort(all_alphas)
+    sns.histplot(sorted_values.cpu())
+
+    discrete_mask = discretize_mask(prune_mask, -1)
+    discrete_mask, edges, clipped_edges, _, _ = prune_dangling_edges(discrete_mask)
+
+    print(state_dict.keys())
+
+    edge_pruner.load_state_dict(state_dict, strict=False)
+    mask_sampler.set_mask(discrete_mask)
+
     ds_iter = iter(ds_test)
+    kl_losses = []
+
     for i in tqdm(range(20)):
-        batch, last_token_pos = task_ds.next_batch(tokenizer,next(ds_iter))
+        batch, last_token_pos = task_ds.next_batch(tokenizer, next(ds_iter))
         with torch.no_grad():
             loss = edge_pruner(batch, last_token_pos, timing=False)
-        kl_losses.append(loss.mean().item())
+            kl_losses.append(loss.mean().item())
+
     avg_loss = np.mean(kl_losses)
+    log["lamb"].append(lamb)
+    log["tau"].append(0)
     log["edges"].append(edges)
     log["clipped_edges"].append(clipped_edges)
     log["losses"].append(avg_loss)
     print("Clipped edges", clipped_edges)
     print("Avg KL loss", avg_loss)
 
-with open(out_path, "wb") as f:
+with open(f"{folder}/pre_training.pkl", "wb") as f:
     pickle.dump(log, f)
+
+
 # %%
