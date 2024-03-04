@@ -34,7 +34,7 @@ try:
 except:
     reg_lamb=1e-4
 
-folder=f"pruning_edges_auto/ioi_reinit_lr"
+folder=f"acdc_ioi_runs"
 
 batch_size=50
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
@@ -53,5 +53,5 @@ edge_pruner.add_patching_hooks()
 
 # %%
 next_batch = partial(task_ds.next_batch, tokenizer)
-pruning_cfg.record_post_training(mask_sampler, edge_pruner, ds_test, next_batch)
+pruning_cfg.record_post_training(mask_sampler, edge_pruner, ds_test, next_batch, load_edges=True)
 # %%

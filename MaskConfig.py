@@ -17,7 +17,7 @@ from itertools import cycle
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from circuit_utils import edge_prune_mask, vertex_prune_mask, retrieve_mask, discretize_mask, prune_dangling_edges, get_ioi_nodes, mask_to_edges, nodes_to_mask, nodes_to_vertex_mask, mask_to_nodes
+from circuit_utils import edge_prune_mask, vertex_prune_mask, retrieve_mask, discretize_mask, prune_dangling_edges, get_ioi_nodes, mask_to_edges, nodes_to_mask, nodes_to_vertex_mask, mask_to_nodes, edges_to_mask
 from training_utils import LinePlot
 
 # %%
@@ -50,14 +50,14 @@ class InferenceConfig:
 
         self.temp_momentum = 0
     
-    def init_params(self, init_param, init_scale):
+    def initialize_params(self, init_param, init_scale):
         if init_scale is None:
             self.init_params = {
                 k: [
                     torch.stack(
-                        [torch.ones(mask_tensor.shape[1:]) * init_param, 
-                        torch.ones(mask_tensor.shape[1:]) * self.starting_beta], 
-                    dim=-1).to(self.device)
+                        [mask_tensor.squeeze(0).to(self.device) * init_param, 
+                        torch.ones(mask_tensor.shape[1:]).to(self.device) * self.starting_beta], 
+                    dim=-1)
                     for mask_tensor in self.constant_prune_mask[k]
                 ]
                 for k in self.constant_prune_mask
@@ -170,7 +170,7 @@ class InferenceConfig:
         
         return LinePlot(['step_size', 'mode_step_size'])
     
-    def record_post_training(self, mask_sampler, component_pruner, ds_test, next_batch, in_format="edges", out_format="edges"):
+    def record_post_training(self, mask_sampler, component_pruner, ds_test, next_batch, in_format="edges", out_format="edges", load_edges=False):
         log = {"lamb": [], "tau": [], "losses": []}
         if out_format == "edges":
             log["edges"] = []
@@ -180,14 +180,22 @@ class InferenceConfig:
             lamb = lamb_path.split("/")[-1]
             print(lamb)
             try:
-                float(lamb)
-                prune_mask = retrieve_mask(lamb_path)
+                float(lamb[-1])
+                float(lamb[0])
+
+                if load_edges:
+                    edge_list = torch.load(f"{self.folder}/edges_{lamb}.pth")
+                    prune_mask = edges_to_mask(edge_list)
+                    prune_mask, c_e, clipped_e, _, _ = prune_dangling_edges(prune_mask)
+                else:
+                    prune_mask = retrieve_mask(lamb_path)
             except:
                 if lamb == "manual":
                     ioi_nodes = get_ioi_nodes()
                     prune_mask = nodes_to_vertex_mask(ioi_nodes)
                 else:
                     continue
+
 
             files = glob.glob(f"{lamb_path}/fit_modes_*.pth")
             for tau_path in files:
@@ -203,7 +211,7 @@ class InferenceConfig:
                 if in_format=="edges":
                     discrete_mask, edges, clipped_edges, _, _ = prune_dangling_edges(discrete_mask)
                 elif out_format=="edges":
-                    _, edges = mask_to_edges(nodes_to_mask(mask_to_nodes(prune_mask, mask_type="nodes")[0]))
+                    _, edges = mask_to_edges(nodes_to_mask(mask_to_nodes(discrete_mask, mask_type="nodes")[0], all_mlps=False))
                     clipped_edges = edges
                 mask_sampler.set_mask(discrete_mask)
 
@@ -233,7 +241,7 @@ class InferenceConfig:
 # %%
     
 class EdgeInferenceConfig(InferenceConfig):
-    def __init__(self, cfg, device, folder, batch_size=None, init_param=-0.5, init_scale=None):
+    def __init__(self, cfg, device, folder, batch_size=None, init_param=-0.5, init_scale=None, prior=None, prior_scale=0):
         super().__init__(device, folder, cfg.n_layers)
 
         if batch_size is not None:
@@ -247,8 +255,11 @@ class EdgeInferenceConfig(InferenceConfig):
         self.lr = 1e-1
         self.lr_modes = 1e-3
 
-        self.init_params(init_param, init_scale)
+        self.initialize_params(init_param, init_scale)
 
+
+
+    
 class VertexInferenceConfig(InferenceConfig):
     def __init__(self, cfg, device, folder, batch_size=None, init_param=-0.5, init_scale=None):
         super().__init__(device, folder, cfg.n_layers)
@@ -264,4 +275,4 @@ class VertexInferenceConfig(InferenceConfig):
         self.lr = 1e-2
         self.lr_modes = 1e-3
 
-        self.init_params(init_param, init_scale)
+        self.initialize_params(init_param, init_scale)

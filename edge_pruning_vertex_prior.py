@@ -19,7 +19,9 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
 from EdgePruner import EdgePruner
-from MaskSampler import EdgeMaskJointSampler
+from VertexPruner import VertexPruner
+from circuit_utils import retrieve_mask, edge_prune_mask, discretize_mask
+from MaskSampler import MaskSampler, EdgeMaskJointSampler
 from MaskConfig import EdgeInferenceConfig
 from task_datasets import IOIConfig, GTConfig
 from training_utils import load_model_data, LinePlot
@@ -44,12 +46,22 @@ try:
                         help='regularization constant')
     parser.add_argument('-s', '--subfolder',
                         help='where to save stuff')
+    parser.add_argument('-t', '--strength',
+                        help='prior strength')
+    parser.add_argument('-p', '--prior',
+                        help='which vertex lambda')
     args = parser.parse_args()
     reg_lamb = float(args.lamb)
+    prior_lamb = float(args.prior)
+    prior_scale = float(args.strength)
+    prior_lamb = float(args.prior)
     subfolder = args.subfolder
 except:
+    raise Exception()
     reg_lamb = None
     subfolder = None
+    prior_scale = 0.5
+    prior_lamb = 7e-3
 
 if reg_lamb is None:
     reg_lamb = 4e-4
@@ -61,16 +73,19 @@ gpu_requeue = True
 print(reg_lamb)
 
 if subfolder is not None:
-    folder=f"pruning_edges_auto/ioi_reinit_lr/{subfolder}"
+    folder=f"pruning_edges_auto/ioi_vertex_prior/{subfolder}"
 else:
-    folder=f"pruning_edges_auto/ioi_reinit_lr/{reg_lamb}"
+    folder=f"pruning_edges_auto/ioi_vertex_prior/{reg_lamb}-{prior_lamb}-{prior_scale}"
+
+prior_folder = f"pruning_vertices_auto/ioi_with_mlp/{prior_lamb}" 
 
 pretrained_folder = None
 # f"pruning_edges_auto/ioi/300.0"
 if not os.path.exists(folder):
     os.makedirs(folder)
 
-pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=0)
+init_param = 0
+pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=init_param)
 pruning_cfg.lamb = reg_lamb
 
 task_ds = IOIConfig(pruning_cfg.batch_size, device)
@@ -79,14 +94,50 @@ for param in model.parameters():
     param.requires_grad = False
 
 # %%
+vertex_prune_mask, state_dict = retrieve_mask(prior_folder, state_dict=True)
+all_alphas = torch.cat([ts.flatten() for k in vertex_prune_mask for ts in vertex_prune_mask[k]], dim=0)
+sns.histplot(all_alphas.cpu())
 
+
+vertex_prune_mask['mlp'].insert(0, torch.tensor([0]).to(device))
+vertex_prune_mask['mlp'].append(torch.tensor([0]).to(device))
+
+for i, ts in enumerate(edge_prune_mask['attn-attn']):
+    if i == 0:
+        continue
+    src_contrib = torch.stack(vertex_prune_mask['attn'][:i],dim=1).squeeze(0)
+    dest_contrib = vertex_prune_mask['attn'][i].unsqueeze(-1).unsqueeze(-1)
+    ts *= 0 
+    ts += init_param + prior_scale * (src_contrib + dest_contrib)
+
+for i, ts in enumerate(edge_prune_mask['mlp-attn']):
+    src_contrib = torch.stack(vertex_prune_mask['mlp'][:i+1],dim=1).squeeze(0)
+    dest_contrib = vertex_prune_mask['attn'][i].unsqueeze(-1)
+    ts *= 0 
+    ts += init_param + prior_scale * (src_contrib + dest_contrib)
+
+for i, ts in enumerate(edge_prune_mask['attn-mlp']):
+    src_contrib = torch.stack(vertex_prune_mask['attn'][:i+1],dim=1).squeeze(0)
+    dest_contrib = vertex_prune_mask['mlp'][i+1].unsqueeze(-1).unsqueeze(-1)
+    ts *= 0 
+    ts += init_param + prior_scale * (src_contrib + dest_contrib)
+
+for i, ts in enumerate(edge_prune_mask['mlp-mlp']):
+    src_contrib = torch.stack(vertex_prune_mask['mlp'][:i+1],dim=1).squeeze(0)
+    dest_contrib = vertex_prune_mask['mlp'][i+1].unsqueeze(-1)
+    ts *= 0 
+    ts += init_param + prior_scale * (src_contrib + dest_contrib)
+
+pruning_cfg.constant_prune_mask = edge_prune_mask
+pruning_cfg.initialize_params(1,None)
+# %%
 # prune_retrain = True
 # prune_length = 200
 # retrain_length = 100
 
 # %%
 mask_sampler = EdgeMaskJointSampler(pruning_cfg)
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, parallel_inference=True, node_reg=node_reg)
+edge_pruner = EdgePruner(model, pruning_cfg, [state_dict["modal_attention"], state_dict["modal_mlp"]], mask_sampler, parallel_inference=True, node_reg=node_reg)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
@@ -98,11 +149,12 @@ modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.mo
 lp_count = pruning_cfg.load_snapshot(edge_pruner, sampling_optimizer, modal_optimizer, gpu_requeue, pretrained_folder=None)
 
 take_snapshot = partial(pruning_cfg.take_snapshot, edge_pruner, lp_count, sampling_optimizer, modal_optimizer)
-# %%
+
 # if prune_retrain and edge_pruner.log.t == 0:
 #     edge_pruner.log.mode = "prune"
 #     edge_pruner.log.cur_counter = 0
 
+# %%
 max_batches = 10000
 for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 

@@ -36,7 +36,7 @@ if manual:
     folder=f"pruning_vertices_auto/ioi/manual"
     tau = 0.5
 else:
-    folder=f"pruning_vertices_auto/ioi/{reg_lamb}"
+    folder=f"pruning_vertices_auto/ioi_with_mlp/{reg_lamb}"
 
 batch_size=75
 pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, init_param=0, batch_size=batch_size)

@@ -11,7 +11,7 @@ from VertexPruner import VertexPruner
 from MaskSampler import ConstantMaskSampler
 from MaskConfig import VertexInferenceConfig
 from task_datasets import IOIConfig, GTConfig
-from circuit_utils import discretize_mask, prune_dangling_edges, retrieve_mask, vertex_mask_to_nodes, nodes_to_mask
+from circuit_utils import discretize_mask, prune_dangling_edges, retrieve_mask, mask_to_nodes, nodes_to_mask
 from training_utils import load_model_data, LinePlot
 
 # %%
@@ -31,7 +31,7 @@ try:
 except:
     reg_lamb=1e-2
 
-base_folder = f"pruning_vertices_auto/ioi"
+base_folder = f"pruning_vertices_auto/ioi_with_mlp"
 
 batch_size = 50
 pruning_cfg = VertexInferenceConfig(model.cfg, device, None, batch_size=batch_size)
@@ -60,6 +60,9 @@ for g in glob.glob(f"{base_folder}/*"):
     out_path=f"{base_folder}/report/{str(reg_lamb).replace('.', '-')}.pkl"
 
     prune_mask, state_dict = retrieve_mask(folder, state_dict=True)
+
+    if prune_mask is None:
+        continue
     all_alphas = torch.cat([ts.flatten() for k in prune_mask for ts in prune_mask[k]], dim=0)
     sorted_values, _ = torch.sort(all_alphas)
     sns.histplot(sorted_values.cpu())
@@ -76,7 +79,7 @@ for g in glob.glob(f"{base_folder}/*"):
     for tau in tqdm(cand_taus):
         discrete_mask = discretize_mask(prune_mask, tau)
 
-        edge_mask = nodes_to_mask(vertex_mask_to_nodes(discrete_mask))
+        edge_mask = nodes_to_mask(mask_to_nodes(discrete_mask, mask_type="nodes"), all_mlps=False)
         cpm, edges, clipped_edges, _, _ = prune_dangling_edges(edge_mask)
         if clipped_edges == prev_edges:
             continue

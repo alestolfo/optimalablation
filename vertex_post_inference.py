@@ -25,7 +25,7 @@ try:
 except:
     reg_lamb=1e-4
 
-folder=f"pruning_vertices_auto/ioi"
+folder=f"pruning_vertices_auto/ioi_with_mlp"
 
 batch_size=50
 pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
@@ -44,4 +44,5 @@ vertex_pruner.add_patching_hooks()
 # %%
 next_batch = partial(task_ds.next_batch, tokenizer)
 pruning_cfg.record_post_training(mask_sampler, vertex_pruner, ds_test, next_batch, in_format="nodes")
+# %%
 # %%

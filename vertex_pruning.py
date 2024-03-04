@@ -48,7 +48,7 @@ except:
     subfolder = None
 
 if reg_lamb is None:
-    reg_lamb = 4e-4
+    reg_lamb = 3e-3
 
 gpu_requeue = True
 
@@ -124,7 +124,10 @@ for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
         take_snapshot("")
         if checkpointing:
             take_snapshot(f"-{no_batches}")
-        if vertex_pruner.early_term() >= 10:
+        if vertex_pruner.early_term(.005) >= 10:
             take_snapshot("-final")
             break
+# %%
+
+vertex_pruner
 # %%
