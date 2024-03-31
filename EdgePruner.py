@@ -97,7 +97,10 @@ class EdgePruner(torch.nn.Module):
         def prepend_orig(out):
             if self.parallel_inference:
                 return torch.cat([orig_in[:self.pruning_cfg.batch_size], out], dim=0)
-            return out
+            # return out
+
+            # do not modify inference on BOS token
+            return torch.cat([orig_in[:,[0]].detach(), out[:,1:]], dim=1)
         # i is the current layer (0-indexed, equal to the number of layers before this one)
         # orig_in: batch x seq_pos x d_model
         # prune_mask[0]: (bsz * n_samples) x n_heads (dest) x i x n_heads (source)
@@ -114,7 +117,10 @@ class EdgePruner(torch.nn.Module):
         # print((out-orig_in).square().sum())
 
         if not self.ablation_backward:
-            out = out + ((1-mlp_mask) * self.modal_mlp[:layer_no+1]).sum(dim=-2)
+            out = out + (
+                (mlp_mask < 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1]
+                + (mlp_mask >= 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1].detach()
+            ).sum(dim=-2)
 
         if layer_no == 0:
             return prepend_orig(out)
@@ -125,7 +131,10 @@ class EdgePruner(torch.nn.Module):
 
         # (bsz * n_samples) x 1 (seq_pos) x n_heads (dest) x i x n_heads (source) x 1 (d_model/d_head)
         attn_mask = self.mask_sampler.sampled_mask["attn-attn"][layer_no][:,circ_idx].unsqueeze(1).unsqueeze(-1)
-        attn_term = attn_mask * torch.stack(self.attention_cache, dim=-3).unsqueeze(dim=2)
+        attn_term = attn_mask * torch.stack(self.attention_cache, dim=-3).unsqueeze(dim=2) + (
+            (attn_mask < 0.001) * (1-attn_mask) * self.modal_attention[:layer_no]
+            + (attn_mask >= 0.001) * (1-attn_mask) * self.modal_attention[:layer_no].detach()
+        )
 
         # W_O: source_head x d_head x d_model
         if self.cache_compressed_attn:
@@ -141,9 +150,14 @@ class EdgePruner(torch.nn.Module):
         out = out + attn_term + self.post_bias[:layer_no].sum(dim=0)
 
         if self.ablation_backward:
+            # IS THIS WHY ITERATIVE DIDN'T WORK? opt point isn't weighted by (1-x)
             return prepend_orig(out + self.modal_attention[layer_no])
-
-        return prepend_orig(out + ((1-attn_mask) * self.modal_attention[:layer_no]).sum(dim=[-3,-2]))
+        
+        return prepend_orig(out)
+        # return prepend_orig(out + (
+        #     (attn_mask < 0.001) * (1-attn_mask) * self.modal_attention[:layer_no]
+        #     + (attn_mask >= 0.001) * (1-attn_mask) * self.modal_attention[:layer_no].detach()
+        # ).sum(dim=[-3,-2]))
 
     # same as attentions except not parallelized
     # attention_constants: list of all constants for attention for layers thus far
@@ -157,7 +171,11 @@ class EdgePruner(torch.nn.Module):
         def prepend_orig(out):
             if self.parallel_inference:
                 return torch.cat([orig_in[:self.pruning_cfg.batch_size], out], dim=0)
-            return out
+            # return out
+
+            # do not modify inference on BOS token
+            return torch.cat([orig_in[:,[0]].detach(), out[:,1:]], dim=1)
+        
         # i is the current layer (0-indexed, equal to the number of layers before this one)
         # orig_in: batch x seq_pos x d_model
         # prune_mask[0]: (bsz * n_samples) x i x n_heads
@@ -175,13 +193,19 @@ class EdgePruner(torch.nn.Module):
         out = (mlp_mask * torch.stack(self.mlp_cache, dim=2)).sum(dim=2)
 
         if not self.ablation_backward:
-            out = out + ((1-mlp_mask) * self.modal_mlp[:layer_no+1]).sum(dim=2)
+            out = out + (
+                (mlp_mask < 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1]
+                + (mlp_mask >= 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1].detach()
+            ).sum(dim=2)
 
         # print((out - mlp_cache[0]).square().sum())
         
         # (bsz * n_samples) x 1 (seq_pos) x i x n_heads x 1 (d_model)
         attn_mask = self.mask_sampler.sampled_mask["attn-mlp"][layer_no].unsqueeze(1).unsqueeze(-1)
-        attn_term = attn_mask * torch.stack(self.attention_cache, dim=-3)
+        attn_term = attn_mask * torch.stack(self.attention_cache, dim=-3) + (
+            (attn_mask < 0.001) * (1-attn_mask) * self.modal_attention[:attn_layers_before]
+            + (attn_mask >= 0.001) * (1-attn_mask) * self.modal_attention[:attn_layers_before].detach()
+        )
 
         # W_O: source_head x d_head x d_model
         if self.cache_compressed_attn:
@@ -200,7 +224,7 @@ class EdgePruner(torch.nn.Module):
         if self.ablation_backward:
             return prepend_orig(out + self.modal_mlp[layer_no])
         
-        return prepend_orig(out + ((1-attn_mask) * self.modal_attention[:attn_layers_before]).sum(dim=[2,3]))
+        return prepend_orig(out)
 
     def pruning_edge_final_hook_all_tokens(self, orig_in, hook):
         out = self.pruning_edge_mlp_hook_all_tokens(self.base_model.cfg.n_layers, orig_in, hook)
@@ -311,7 +335,7 @@ class EdgePruner(torch.nn.Module):
         return self.log.early_term_count
 
     def get_modes(self):
-        return torch.cat([self.modal_attention.flatten(start_dim=0,end_dim=1), self.modal_mlp], dim=0)
+        return torch.cat([self.modal_attention.flatten(start_dim=1,end_dim=2), self.modal_mlp], dim=0)
     
     def complexity_loss(self, sampling_params):
         return (sampling_params[...,0]-sampling_params[...,1].relu() * (math.log(-self.pruning_cfg.hard_concrete_endpoints[0]/self.pruning_cfg.hard_concrete_endpoints[1]))).sigmoid()

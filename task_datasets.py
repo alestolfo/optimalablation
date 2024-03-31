@@ -23,10 +23,21 @@ from greater_than.utils import get_valid_years
 from greater_than.data import YearDataset
 
 class OWTConfig():
-    def __init__(self, owt_iter):
+    def __init__(self, owt_iter, device):
         self.ds_iter = owt_iter
+        self.device = device
+    
+    def init_modes(self):
+        with open("oca/owt/means_attention.pkl", "rb") as f:
+            # n_layers x n_heads x d_model
+            init_modes_attention = pickle.load(f)
+        with open("oca/owt/means_mlp.pkl", "rb") as f:
+            # n_layers x n_heads x d_model
+            init_modes_mlp = pickle.load(f)
+        return init_modes_attention[:,-1], init_modes_mlp[:,-1]
 
     def next_batch(self):
+        # BOS is already prepended
         batch = next(self.ds_iter)['tokens'].to(self.device)
         return batch, batch.shape[1] - 1
     
@@ -50,13 +61,20 @@ class IOIConfig():
         return self.ds_test
     
     def init_modes(self):
-        with open("modes/ioi/means_attention.pkl", "rb") as f:
+        with open("oca/ioi/means_attention.pkl", "rb") as f:
             # n_layers x n_heads x d_model
             init_modes_attention = pickle.load(f)
-        with open("modes/ioi/means_mlp.pkl", "rb") as f:
+        with open("oca/ioi/means_mlp.pkl", "rb") as f:
             # n_layers x n_heads x d_model
             init_modes_mlp = pickle.load(f)
-        return init_modes_attention, init_modes_mlp
+        return init_modes_attention[:,-1], init_modes_mlp[:,-1]
+        # with open("modes/ioi/means_attention.pkl", "rb") as f:
+        #     # n_layers x n_heads x d_model
+        #     init_modes_attention = pickle.load(f)
+        # with open("modes/ioi/means_mlp.pkl", "rb") as f:
+        #     # n_layers x n_heads x d_model
+        #     init_modes_mlp = pickle.load(f)
+        # return init_modes_attention, init_modes_mlp
 
     def next_batch(self, tokenizer, test_batch=None):
         if test_batch is not None:
@@ -86,13 +104,20 @@ class GTConfig():
         return self.ds_test
 
     def init_modes(self):
-        with open("modes/gt/means_attention.pkl", "rb") as f:
+        with open("oca/gt/means_attention.pkl", "rb") as f:
             # n_layers x n_heads x d_model
             init_modes_attention = pickle.load(f)
-        with open("modes/gt/means_mlp.pkl", "rb") as f:
+        with open("oca/gt/means_mlp.pkl", "rb") as f:
             # n_layers x n_heads x d_model
             init_modes_mlp = pickle.load(f)
-        return init_modes_attention, init_modes_mlp
+        return init_modes_attention[:,-1], init_modes_mlp[:,-1]
+        # with open("modes/gt/means_attention.pkl", "rb") as f:
+        #     # n_layers x n_heads x d_model
+        #     init_modes_attention = pickle.load(f)
+        # with open("modes/gt/means_mlp.pkl", "rb") as f:
+        #     # n_layers x n_heads x d_model
+        #     init_modes_mlp = pickle.load(f)
+        # return init_modes_attention, init_modes_mlp
 
     def next_batch(self, tokenizer, test_batch=None):
         if test_batch is not None:
@@ -101,7 +126,7 @@ class GTConfig():
             if self.years_to_sample_from is None:
                 self.years_to_sample_from = get_valid_years(tokenizer, 1000, 1900)
             batch = YearDataset(self.years_to_sample_from, self.batch_size, Path("greater_than/potential_nouns.txt"), tokenizer, balanced=False, device=self.device, eos=False).good_toks
-        last_token_pos = ((batch.shape[1] - 1) * torch.ones(batch.shape[0])).int()
+        last_token_pos = ((batch.shape[1] - 1) * torch.ones(batch.shape[0])).int().to(self.device)
         # prepend bos token
         batch = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(batch.shape[0],1).to(self.device),batch], dim=1)
         return batch, last_token_pos

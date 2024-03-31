@@ -52,7 +52,7 @@ except:
     subfolder = None
 
 if reg_lamb is None:
-    reg_lamb = 4e-4
+    reg_lamb = 2e-4
 
 node_reg=5e-3
 gpu_requeue = True
