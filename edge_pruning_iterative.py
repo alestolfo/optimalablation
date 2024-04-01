@@ -100,10 +100,10 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     # sample prune mask
     graph_suffix = f"-{no_batches}" if checkpointing else "" if plotting else None
-    loss, all_sampling_params = edge_pruner(batch, last_token_pos, graph_suffix, complexity_mean=True, timing=False)
+    loss = edge_pruner(batch, last_token_pos, graph_suffix, timing=False)
     loss.mean().backward()
 
-    prev_alphas = all_sampling_params[:,0].detach().clone()
+    prev_alphas = mask_sampler.get_sampling_params()[:,0].detach().clone()
     prev_modes = edge_pruner.get_modes().detach().clone()
 
     sampling_optimizer.step()

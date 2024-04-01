@@ -27,7 +27,7 @@ try:
     subfolder = args.subfolder
     tau = float(args.tau)
 except:
-    reg_lamb = 2e-4
+    # reg_lamb = 2e-4
     subfolder = None
     tau = -1
 
@@ -44,7 +44,7 @@ gpu_requeue = True
 if subfolder is not None:
     folder=f"pruning_edges_auto/{subfolder}/{reg_lamb}"
 else:
-    folder=f"pruning_edges_auto/ioi_edges_unif/{reg_lamb}"
+    folder=f"pruning_edges_auto/gt_edges_unif/{reg_lamb}"
 
 # %%
     
@@ -65,7 +65,7 @@ n_heads = model.cfg.n_heads
 batch_size = 75
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
 # pruning_cfg.lamb = reg_lamb
-task_ds = IOIConfig(batch_size, device)
+task_ds = GTConfig(batch_size, device)
 
 for param in model.parameters():
     param.requires_grad = False

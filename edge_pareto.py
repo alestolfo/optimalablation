@@ -2,11 +2,13 @@
 import pickle
 import seaborn as sns
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator
+from matplotlib.ticker import MultipleLocator, AutoMinorLocator
 import glob
 import os
 
-sns.set()
+sns.set(rc={"xtick.bottom" : True, "ytick.left" : True})
+# plt.rcParams.update({"xtick.bottom" : True, "ytick.left" : True})
+
 
 # %%
 def plot_points(k, x):
@@ -16,12 +18,18 @@ def plot_points(k, x):
             log = pickle.load(f)
         # print(log)
         print(log['tau'])
-        sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k} post training", marker="X", s=50)
+        ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k} post training", marker="X", s=50)
 
-def plot_pareto(folder):
-    folder, manual_folder = folder
+        for i,t in enumerate(log['tau']):
+            print(t, log["lamb"][i], log['clipped_edges'][i], log['losses'][i])
+            if log["lamb"][i] == "manual":
+                plt.plot(log["clipped_edges"][i], log["losses"][i], 'k*', markersize=10)
+    return ax
 
-    plt.figure(figsize=(15,30))
+def plot_pareto(pms):
+    folder, manual_folder, y_bound, x_bound = pms
+
+    fig = plt.figure(figsize=(10,15))
 
     for k, x in folder.items():
         ax = None
@@ -54,18 +62,24 @@ def plot_pareto(folder):
         plot_points(k, x)
     
     for k, x in manual_folder.items():
-        plot_points(k,x)
-        # if os.path.exists(f"{x}/pre_training.pkl"):
-        #     with open(f"{x}/pre_training.pkl", "rb") as f:
-        #         log = pickle.load(f)
-        #     print(log)
-        #     sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label="pre training", marker="X", s=50)
+        ax = plot_points(k,x)
+        if os.path.exists(f"{x}/pre_training.pkl"):
+            with open(f"{x}/pre_training.pkl", "rb") as f:
+                log = pickle.load(f)
+            print(log)
+            sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label="pre training", marker="X", s=50)
     
-    plt.ylim(0,0.3)
-    plt.xlim(0,4000)
+    plt.ylim(0,y_bound)
+    plt.xlim(0,x_bound)
     plt.gca().xaxis.set_major_locator(MultipleLocator(200)) # x gridlines every 0.5 units
-    plt.gca().yaxis.set_major_locator(MultipleLocator(0.01)) # y gridlines every 0.5 units
+    plt.minorticks_on()
+    plt.tick_params(which='minor', bottom=False, left=False)
 
+    plt.gca().xaxis.set_minor_locator(AutoMinorLocator(2)) # x gridlines every 0.5 units
+    plt.grid(visible=True, which='minor', color='w', linewidth=0.5)
+    plt.gca().yaxis.set_major_locator(MultipleLocator(0.01)) # y gridlines every 0.5 units
+    plt.xlabel("Edges kept")
+    plt.ylabel("KL divergence")
     plt.show()
 
 # %%
@@ -73,20 +87,21 @@ ax = None
 # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
 folders=[
     ({
-        "edges": "pruning_edges_auto/ioi_clipped_edges", 
         "vertex": "pruning_vertices_auto/ioi_with_mlp", 
-        "edges from vertex prior": "pruning_edges_auto/ioi_vertex_prior"
-        # "reset_optim": "pruning_edges_auto/ioi_reinit",  
-        # "prune_retrain": "pruning_edges_auto/ioi_reinit_lr",
+        "edges HC": "pruning_edges_auto/ioi_edges", 
+        "edges HC (vertex prior)": "pruning_edges_auto/ioi_vertex_prior", 
+        "edges uniform": "pruning_edges_auto/ioi_edges_unif", 
     }, {
         "ACDC": "acdc_ioi_runs",
-        "iterative": "pruning_edges_auto/ioi_iter",
-        "manual": "pruning_vertices_auto/ioi_manual",
-    }),
-    # ([], ["pruning_edges_auto/ioi_iter"]),
-    # "pruning_edges_auto-2-24/ioi-2-26",
-    # "pruning_edges_auto-2-24/gt",
-    # "pruning_edges_auto-2-26/ioi_zero_init",
+    }, 0.15, 3000),
+    ({
+        "vertex": "pruning_vertices_auto/gt", 
+        "edges HC": "pruning_edges_auto/gt_edges", 
+        "edges HC (vertex prior)": "pruning_edges_auto/gt_vertex_prior", 
+        "edges uniform": "pruning_edges_auto/gt_edges_unif", 
+    }, {
+        "ACDC": "acdc_gt_runs",
+    }, 0.04,1500),
 ]
 
 for folder in folders:
@@ -94,6 +109,24 @@ for folder in folders:
 
 
 # %%
+
+# folders=[
+#     ({
+#         "edges": "pruning_edges_auto/ioi_clipped_edges", 
+#         "vertex": "pruning_vertices_auto/ioi_with_mlp", 
+#         "edges from vertex prior": "pruning_edges_auto/ioi_vertex_prior"
+#         # "reset_optim": "pruning_edges_auto/ioi_reinit",  
+#         # "prune_retrain": "pruning_edges_auto/ioi_reinit_lr",
+#     }, {
+#         "ACDC": "acdc_ioi_runs",
+#         "iterative": "pruning_edges_auto/ioi_iter",
+#         "manual": "pruning_vertices_auto/ioi_manual",
+#     }),
+#     # ([], ["pruning_edges_auto/ioi_iter"]),
+#     # "pruning_edges_auto-2-24/ioi-2-26",
+#     # "pruning_edges_auto-2-24/gt",
+#     # "pruning_edges_auto-2-26/ioi_zero_init",
+# ]
 
 # plt.plot(1176, 0.09452762454748154, 'gs')
 # plt.plot(1256, 0.10203401073813438, 'gs')

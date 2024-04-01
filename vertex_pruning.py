@@ -29,7 +29,7 @@ model_name = "gpt2-small"
 owt_batch_size = 10
 device, model, tokenizer, owt_iter = load_model_data(model_name, owt_batch_size)
 model.train()
-model.cfg.use_attn_result = True
+# model.cfg.use_attn_result = True
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
@@ -103,10 +103,10 @@ for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
 
     # sample prune mask
     graph_suffix = f"-{no_batches}" if checkpointing else "" if plotting else None
-    loss, all_sampling_params = vertex_pruner(batch, last_token_pos, graph_suffix)
+    loss = vertex_pruner(batch, last_token_pos, graph_suffix)
     loss.backward()
 
-    prev_alphas = all_sampling_params[:,0].detach().clone()
+    prev_alphas = mask_sampler.get_sampling_params()[:,0].detach().clone()
     prev_modes = vertex_pruner.get_modes().detach().clone()
 
     sampling_optimizer.step()
@@ -129,5 +129,4 @@ for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
             break
 # %%
 
-vertex_pruner
 # %%

@@ -15,7 +15,7 @@ model_name = "gpt2-small"
 owt_batch_size = 10
 device, model, tokenizer, owt_iter = load_model_data(model_name, owt_batch_size)
 model.eval()
-model.cfg.use_attn_result = True
+# model.cfg.use_attn_result = True
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
@@ -44,5 +44,5 @@ vertex_pruner.add_patching_hooks()
 # %%
 next_batch = partial(task_ds.next_batch, tokenizer)
 pruning_cfg.record_post_training(mask_sampler, vertex_pruner, ds_test, next_batch, in_format="nodes")
-# %%
+
 # %%

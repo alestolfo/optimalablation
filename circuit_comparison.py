@@ -27,27 +27,50 @@ from training_utils import LinePlot
 # %%
 
 folders=[
-    {
-        "edges": "pruning_edges_auto/ioi_clipped_edges", 
-        "vertex": "pruning_vertices_auto/ioi_with_mlp", 
-        "edges from vertex prior": "pruning_edges_auto/ioi_vertex_prior",
-        # "reset_optim": "pruning_edges_auto/ioi_reinit",  
-        # "prune_retrain": "pruning_edges_auto/ioi_reinit_lr",
-        "iterative": "pruning_edges_auto/ioi_iter",
-        "acdc": "acdc_ioi_runs",
-        "manual": "pruning_vertices_auto/ioi_manual",
-    },
-    # ([], ["pruning_edges_auto/ioi_iter"]),
-    # "pruning_edges_auto-2-24/ioi-2-26",
-    # "pruning_edges_auto-2-24/gt",
-    # "pruning_edges_auto-2-26/ioi_zero_init",
+    # ({
+    #     "vertex": "pruning_vertices_auto/ioi_with_mlp", 
+    #     "edges HC": "pruning_edges_auto/ioi_edges", 
+    #     "edges HC (vertex prior)": "pruning_edges_auto/ioi_vertex_prior", 
+    #     "edges uniform": "pruning_edges_auto/ioi_edges_unif", 
+    #     "acdc": "acdc_ioi_runs",
+    #     "eap": "eap_ioi_runs"
+    # }),
+    ({
+        "vertex": "pruning_vertices_auto/gt", 
+        "edges HC": "pruning_edges_auto/gt_edges", 
+        "edges HC (vertex prior)": "pruning_edges_auto/gt_vertex_prior", 
+        "edges uniform": "pruning_edges_auto/gt_edges_unif", 
+        "acdc": "acdc_gt_runs",
+        "eap": "eap_gt_runs"
+    }),
 ]
+task_name = "gt"
+out_folder = f"similarities/{task_name}"
+
+# %%
+
+    # {
+    #     "sens": "old_results/pruning_edges_auto-2-24/ioi_sensitivity", 
+    #     # "edges": "pruning_edges_auto/ioi_clipped_edges", 
+    #     # "vertex": "pruning_vertices_auto/ioi_with_mlp", 
+    #     # "edges from vertex prior": "pruning_edges_auto/ioi_vertex_prior",
+    #     # # "reset_optim": "pruning_edges_auto/ioi_reinit",  
+    #     # # "prune_retrain": "pruning_edges_auto/ioi_reinit_lr",
+    #     # "iterative": "pruning_edges_auto/ioi_iter",
+    #     # "acdc": "acdc_ioi_runs",
+    #     # "manual": "pruning_vertices_auto/ioi_manual",
+    # },
+    # # ([], ["pruning_edges_auto/ioi_iter"]),
+    # # "pruning_edges_auto-2-24/ioi-2-26",
+    # # "pruning_edges_auto-2-24/gt",
+    # # "pruning_edges_auto-2-26/ioi_zero_init",
 
 tau = -1
 all_masks = {}
 for task in folders:
     for k in task:
         folder = task[k]
+        print(folder)
         for lamb_path in glob.glob(f"{folder}/*"):
             lamb = lamb_path.split("/")[-1]
             print(lamb_path)
@@ -55,16 +78,22 @@ for task in folders:
                 float(lamb[-1])
                 print(lamb[0])
                 float(lamb[0])
-                if k == "acdc":
+                if k == "acdc" or k == "eap":
                     prune_mask = torch.load(f"{folder}/edges_{lamb}.pth")
                     prune_mask = edges_to_mask(prune_mask)
                 else:
+                    if len(glob.glob(f"{lamb_path}/fit_modes_*.pth")) == 0:
+                        continue
                     prune_mask = retrieve_mask(lamb_path)
                     prune_mask = discretize_mask(prune_mask, tau)
             except:
+                print(lamb)
                 if lamb == "manual":
-                    ioi_nodes = get_ioi_nodes()
-                    prune_mask = nodes_to_mask(ioi_nodes)
+                    prune_mask = torch.load(f"{folder}/edges_{lamb}.pth")
+                    prune_mask = edges_to_mask(prune_mask)
+
+                    # ioi_nodes = get_ioi_nodes()
+                    # prune_mask = nodes_to_mask(ioi_nodes)
                 else:
                     continue
             if (k == "vertex"):
@@ -82,8 +111,10 @@ def get_mask_smiliarities(all_masks, output_folder):
     similarities = []
     node_similarities = []
     total_nodes = []
+    print('Getting all masks')
 
     for k in all_masks:
+        print(k)
         similarities.append({"key1": k})
         node_similarities.append({"key1": k})
         edges_1, mask_1, attn_1, mlp_1 = all_masks[k]
@@ -147,37 +178,55 @@ def get_similarities_manual(all_masks, output_folder):
     df = pd.DataFrame(df)
     df.to_csv(f"{output_folder}/ROC.csv")
 # %%
+# GRID OF SIMILARITIES
 
-get_mask_smiliarities(all_masks, "similarities")
+get_mask_smiliarities(all_masks, out_folder)
 # %%
 
-edge_df = pd.read_csv("similarities/edge_similarities.csv")
+# ROC
+edge_df = pd.read_csv(f"{out_folder}/edge_similarities.csv")
 # %%
-get_similarities_manual(all_masks, "similarities")
+get_similarities_manual(all_masks, out_folder)
 # %%
-roc_df = pd.read_csv("similarities/ROC.csv")
+roc_df = pd.read_csv(f"{out_folder}/ROC.csv")
 # %%
-with open("similarities/acdc_roc.json", "r") as f:
+
+with open(f"{out_folder}/acdc_roc.json", "r") as f:
     acdc_roc_curve = json.load(f)
-acdc_roc_curve = acdc_roc_curve['trained']['random_ablation']['ioi']['kl_div']['ACDC']
+acdc_roc_curve = acdc_roc_curve['trained']['random_ablation'][{"ioi": "ioi", "gt": "greaterthan"}[task_name]]['kl_div']['ACDC']
 # %%
-for task in folders:
-    plt.figure(figsize=(4,20))
-    sns.scatterplot(x=acdc_roc_curve["edge_fpr"], y=acdc_roc_curve["edge_tpr"], label="ACDC")
 
-    for k in task:
-        filt_df = roc_df[roc_df["typ"] == task[k].split("/")[-1]]
-        sns.scatterplot(x=filt_df["FPR_edges"], y=filt_df["TPR_edges"], label=k)
-    plt.xlim(0,0.2)
-    plt.ylim(0,1)
+# EDGE ROC graph
+
+size=15
+pct_vert=0.06
+pct_y=.2
+stretch=6
+plt.figure(figsize=(pct_vert * stretch * size, size * pct_y))
+# sns.scatterplot(x=acdc_roc_curve["edge_fpr"], y=acdc_roc_curve["edge_tpr"], label="ACDC (as advertised)")
+
+for k in task:
+    filt_df = roc_df[roc_df["typ"] == task[k].split("/")[-1]]
+    sns.scatterplot(x=filt_df["FPR_edges"], y=filt_df["TPR_edges"], label=k)
+plt.xlim(0,pct_vert)
+plt.ylim(0,pct_y)
+plt.legend(loc="lower right")
+
+plt.savefig(f"{out_folder}/edge_ROC.png")
+    
 # %%
-for task in folders:
-    plt.figure(figsize=(10,10))
-    sns.scatterplot(x=acdc_roc_curve["node_fpr"], y=acdc_roc_curve["node_tpr"], label="ACDC")
+size=8
+pct_vert=0.8
+stretch=1
+plt.figure(figsize=(pct_vert * stretch * size, size))
+# sns.scatterplot(x=acdc_roc_curve["node_fpr"], y=acdc_roc_curve["node_tpr"], label="ACDC (as advertised)")
 
-    for k in task:
-        filt_df = roc_df[roc_df["typ"] == task[k].split("/")[-1]]
-        sns.scatterplot(x=filt_df["FPR_nodes"], y=filt_df["TPR_nodes"], label=k)
-    plt.xlim(0,1)
-    plt.ylim(0,1)
+for k in task:
+    filt_df = roc_df[roc_df["typ"] == task[k].split("/")[-1]]
+    sns.scatterplot(x=filt_df["FPR_nodes"], y=filt_df["TPR_nodes"], label=k)
+plt.xlim(0,pct_vert)
+plt.ylim(0,1)
+plt.legend(loc="lower right")
+
+plt.savefig(f"{out_folder}/node_ROC.png")
 # %%

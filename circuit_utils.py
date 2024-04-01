@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 # %%
 n_layers = 12
 n_heads = 12
-device="cpu"
+device="cuda:0"
 
 layers_to_prune = []
 for layer_no in range(n_layers):
@@ -100,13 +100,57 @@ def get_ioi_nodes(return_tensor=False):
         nodes['attn'] = torch.tensor(nodes['attn']).to(device)
     return nodes
 
+def get_ioi_edge_mask():
+    init_mask = nodes_to_mask(get_ioi_nodes())
+
+    embed_in_edges = {
+        0: ['s2 inhibition', 'duplicate token', 'previous token'],
+        1: ['name mover', 'backup name mover', 'negative', 'previous token', 'duplicate token']
+    }
+
+    for layer_mask in init_mask['mlp-attn']:
+        layer_mask[...,0] = 0
+
+    for head_type in embed_in_edges[0]:
+        for layer_idx, head_idx in IOI_MANUAL_CIRCUIT[head_type]:
+            init_mask['mlp-attn'][layer_idx][:,0,head_idx,0] = 1
+    
+    for head_type in embed_in_edges[1]:
+        for layer_idx, head_idx in IOI_MANUAL_CIRCUIT[head_type]:
+            init_mask['mlp-attn'][layer_idx][:,1:,head_idx,0] = 1
+
+    embed_out_edges = ['name mover', 'backup name mover', 'negative']
+
+    init_mask['attn-mlp'][-1] *= 0
+
+    for layer_mask in init_mask['attn-attn']:
+        layer_mask *= 0
+
+    for head_type in embed_out_edges:
+        for layer_idx, head_idx in IOI_MANUAL_CIRCUIT[head_type]:
+            init_mask['attn-mlp'][-1][:,layer_idx,head_idx] = 1
+            for src_layer, src_head in IOI_MANUAL_CIRCUIT['s2 inhibition']:
+                init_mask['attn-attn'][layer_idx][:,0,head_idx,src_layer, src_head] = 1
+    
+    for layer_idx, head_idx in IOI_MANUAL_CIRCUIT['s2 inhibition']:
+        for head_type in ['duplicate token', 'induction']:
+            for src_layer, src_head in IOI_MANUAL_CIRCUIT[head_type]:
+                init_mask['attn-attn'][layer_idx][:,1:,head_idx,src_layer, src_head] = 1
+
+    for layer_idx, head_idx in IOI_MANUAL_CIRCUIT['induction']:
+        for src_layer, src_head in IOI_MANUAL_CIRCUIT['previous token']:
+            init_mask['attn-attn'][layer_idx][:,1:,head_idx,src_layer, src_head] = 1
+    
+    init_mask = edges_to_mask(torch.load("acdc_ioi_runs/edges_manual.pth"))
+    return init_mask            
+
 # %%
 def retrieve_mask(folder, state_dict=False):
     snapshot_path = f"{folder}/snapshot.pth"
 
     if os.path.exists(snapshot_path):
         print("Loading previous training run")
-        previous_state = torch.load(snapshot_path, map_location=torch.device('cpu'))
+        previous_state = torch.load(snapshot_path)
 
         prune_mask = {}
         for k in previous_state['pruner_dict']:
@@ -137,7 +181,7 @@ def plot_mask(prune_mask):
 # %%
     
 def total_edges(mask):
-    return np.sum([np.sum([torch.sum(ts).item() for ts in mask[k]]) for k in mask])
+    return np.sum([np.sum([torch.sum(ts > 0).item() for ts in mask[k]]) for k in mask])
     
 def discretize_mask(prune_mask, threshold):
     filtered_prune_mask = {k: [

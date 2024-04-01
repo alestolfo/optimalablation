@@ -9,7 +9,6 @@ import time
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-import torch.nn.functional as F
 from training_utils import LinePlot
 
 kl_loss = torch.nn.KLDivLoss(reduction="none")
@@ -20,7 +19,6 @@ class EdgePruner(torch.nn.Module):
                  pruning_cfg, 
                  init_modes,
                  mask_sampler, 
-                 node_reg=0,
                  parallel_inference=False, 
                  inference_mode=False, 
                  cache_compressed_attn=True, 
@@ -32,13 +30,11 @@ class EdgePruner(torch.nn.Module):
         self.mask_sampler = mask_sampler
         self.circs = ["q", "k", "v"]
 
-
         init_modes_attention, init_modes_mlp = init_modes
         self.modal_attention = torch.nn.Parameter(init_modes_attention)
         self.modal_mlp = torch.nn.Parameter(init_modes_mlp)
         self.attention_cache = []
         self.mlp_cache = []
-        self.node_reg = node_reg
         self.cache_compressed_attn = cache_compressed_attn
         self.inference_mode = inference_mode
         self.parallel_inference = parallel_inference
@@ -53,9 +49,7 @@ class EdgePruner(torch.nn.Module):
         if cache_compressed_attn:
             self.W_O = torch.stack([self.base_model.blocks[layer_no].attn.W_O.clone().detach() for layer_no in range(self.base_model.cfg.n_layers)], dim=0)
         
-        columns =  ['kl_loss', 'complexity_loss', 'temp', 'temp_cond', 'temp_count', 'temp_reg']
-        if node_reg > 0:
-            columns.append("node_loss")
+        columns =  ['kl_loss', *self.mask_sampler.log_columns]
         self.log = LinePlot(columns)
 
         self.cache_hooks = self.get_cache_hooks()
@@ -336,44 +330,14 @@ class EdgePruner(torch.nn.Module):
 
     def get_modes(self):
         return torch.cat([self.modal_attention.flatten(start_dim=1,end_dim=2), self.modal_mlp], dim=0)
-    
-    def complexity_loss(self, sampling_params):
-        return (sampling_params[...,0]-sampling_params[...,1].relu() * (math.log(-self.pruning_cfg.hard_concrete_endpoints[0]/self.pruning_cfg.hard_concrete_endpoints[1]))).sigmoid()
-    
-    def node_reg_loss(self):
-        n_layers = self.base_model.cfg.n_layers
-        n_heads = self.base_model.cfg.n_heads
-        node_losses_out = torch.zeros((n_layers, n_heads)).to(self.pruning_cfg.device)
-        node_losses_in = []
-        for i,ts in enumerate(self.mask_sampler.sampling_params['attn-attn']):
-            pad_layers = n_layers - i
-            # 3 (dest_circ), 12 (dest head idx), i (prev n_layers), 12 (prev head idx), 2 (0-location and 1-temperature)
-            layer_loss = self.complexity_loss(ts)
-            node_losses_out = node_losses_out + F.pad(layer_loss, (0,0,0,pad_layers), "constant", 0).sum(dim=[0,1])
-            node_losses_in.append(layer_loss.sum(dim=[0,2,3]))
-
-        for i, ts in enumerate(self.mask_sampler.sampling_params['attn-mlp']):
-            pad_layers = max(0, n_layers - i-1)
-            # i (prev n_layers), 12 (prev head idx), 2 (0-location and 1-temperature)
-            layer_loss = self.complexity_loss(ts)
-            node_losses_out = node_losses_out + F.pad(layer_loss, (0,0,0,pad_layers), "constant", 0)
-        
-        for i, ts in enumerate(self.mask_sampler.sampling_params['mlp-attn']):
-            layer_loss = self.complexity_loss(ts)
-            node_losses_in[i] = node_losses_in[i] + layer_loss.sum(dim=[0,2])
-        
-        return F.tanh(2 * (node_losses_out + torch.stack(node_losses_in, dim=0)) / (n_layers * n_heads))        
-                
-    def forward(self, batch, last_token_pos, graph_suffix=None, complexity_mean=False, return_output=False, timing=True):
-        
+                        
+    def forward(self, batch, last_token_pos, graph_suffix=None, return_output=False, timing=True, separate_loss=False):
         if timing:
             end = []
             for x in range(6):
                 end.append(torch.cuda.Event(enable_timing=True))
             end[0].record()
 
-        all_sampling_params = self.mask_sampler()
-        
         self.attention_cache.clear()
         self.mlp_cache.clear()
 
@@ -382,11 +346,15 @@ class EdgePruner(torch.nn.Module):
             last_token_mask[torch.arange(last_token_mask.shape[0]), last_token_pos] = 1
         
         self.last_token_mask = last_token_mask
+        n_samples = 1 if self.inference_mode else self.pruning_cfg.n_samples
+        
+        if self.mask_sampler.use_temperature:
+            self.mask_sampler.set_temp_c(self.pruning_cfg.temp_scheduler(self.log))
+        mask_loss, mask_details = self.mask_sampler()
 
         if timing:
             end[1].record()
         
-        n_samples = 1 if self.inference_mode else self.pruning_cfg.n_samples
         pruned_output = self.base_model(
             batch.repeat(n_samples+(1 if self.parallel_inference else 0),1)
         ).log_softmax(dim=-1)
@@ -417,42 +385,18 @@ class EdgePruner(torch.nn.Module):
                 print("Cuda time", end[i-1].elapsed_time(end[i]))
 
         kl_losses = kl_loss(pruned_output, orig_output.exp()).sum(dim=-1)
-        # io_loss = target_results - ablated_results
 
         if self.inference_mode:
             return kl_losses
 
-        # alphas already logged
-        complexity_loss = self.complexity_loss(all_sampling_params)
-                    
-        temperature_loss = all_sampling_params[...,1].square()
 
-        temp_c = self.pruning_cfg.temp_scheduler(self.log)
-
-        loss = kl_losses.mean() + self.pruning_cfg.lamb * complexity_loss.sum() + temp_c * temperature_loss.sum()
-
-        if self.node_reg > 0:
-            node_reg_loss = self.node_reg_loss()
-            loss += self.node_reg * node_reg_loss.sum()
-
-        # end[4].record()
+        loss = kl_losses.mean() + mask_loss
 
         with torch.no_grad():
-            avg_temp = all_sampling_params[...,1].relu().mean().item()
-            temp_cond = torch.nan_to_num((all_sampling_params[...,1]-1).relu().sum() / (all_sampling_params[:,1] > 1).sum(), nan=0, posinf=0, neginf=0).item() + 1
-            temp_count = (2*all_sampling_params[...,1].relu().sigmoid()-1).mean().item()
-
             log_entry = {
                 "kl_loss": kl_losses.mean().item(), 
-                "complexity_loss": complexity_loss.mean().item() if complexity_mean else complexity_loss.sum().item(),
-                "temp": avg_temp,
-                "temp_cond": temp_cond,
-                "temp_count": temp_count,
-                "temp_reg": temp_c
+                **mask_details
             }
-            if self.node_reg > 0:
-                log_entry["node_loss"] = node_reg_loss.sum().item()
-
             self.log.add_entry(log_entry)
 
             if graph_suffix is not None:
@@ -461,34 +405,11 @@ class EdgePruner(torch.nn.Module):
                 plt.savefig(f"{self.pruning_cfg.folder}/kl-loss{j}.png")
                 plt.close()
 
-                sns.histplot(torch.cat([ts.flatten() for k in self.mask_sampler.sampled_mask for ts in self.mask_sampler.sampled_mask[k]], dim=0).detach().flatten().cpu())
-                plt.savefig(f"{self.pruning_cfg.folder}/mask{j}.png")
-                plt.close()
-
-                sns.histplot(x=all_sampling_params[:,0].sigmoid().detach().flatten().cpu(), y=all_sampling_params[:,1].detach().flatten().cpu(), bins=100)
-                plt.savefig(f"{self.pruning_cfg.folder}/params-probs{j}.png")
-                plt.close()
-
-                sns.histplot(x=all_sampling_params[:,0].detach().flatten().cpu(), y=all_sampling_params[:,1].detach().flatten().cpu(), bins=100)
-                plt.savefig(f"{self.pruning_cfg.folder}/params-logits{j}.png")
-                plt.close()
+                self.mask_sampler.record_state(j)
 
             print("KL:", kl_losses.mean().item())
-            print("Complexity:", complexity_loss.sum().item(), "out of", complexity_loss.nelement())
-
-            if self.node_reg:
-                print("Node complexity:", node_reg_loss.sum().item())
-
-            print("Avg temperature", avg_temp)
-            print("Avg temp > 1", temp_cond)
-            print("Temp count", temp_count)
-
-        # end[5].record()
-
-        # Waits for everything to finish running
-        # torch.cuda.synchronize()
-
-        # for i in range(1,4):
-        #     print("Cuda time", end[i-1].elapsed_time(end[i]))
-
-        return loss, all_sampling_params
+        
+        if separate_loss:
+            return kl_losses.flatten(start_dim=0, end_dim=1), mask_loss
+        else:
+            return loss

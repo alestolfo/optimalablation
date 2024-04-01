@@ -32,7 +32,7 @@ tau = float(argv[2])
 # except:
 # reg_lamb=1e-2
 # tau = -1
-folder=f"eap_ioi_runs"
+folder=f"eap_gt_runs"
 acdc_edges_file=f"{folder}/edges_{reg_lamb}.pth"
 
 if not os.path.exists(f"{folder}/{reg_lamb}"):
@@ -41,7 +41,7 @@ if not os.path.exists(f"{folder}/{reg_lamb}"):
 batch_size = 75
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
 # pruning_cfg.lamb = reg_lamb
-task_ds = IOIConfig(batch_size, device)
+task_ds = GTConfig(batch_size, device)
 
 for param in model.parameters():
     param.requires_grad = False

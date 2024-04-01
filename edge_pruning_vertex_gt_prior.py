@@ -73,11 +73,11 @@ gpu_requeue = True
 print(reg_lamb)
 
 if subfolder is not None:
-    folder=f"pruning_edges_auto/ioi_vertex_prior/{subfolder}"
+    folder=f"pruning_edges_auto/gt_vertex_prior/{subfolder}"
 else:
-    folder=f"pruning_edges_auto/ioi_vertex_prior/{reg_lamb}-{prior_lamb}-{prior_scale}"
+    folder=f"pruning_edges_auto/gt_vertex_prior/{reg_lamb}-{prior_lamb}-{prior_scale}"
 
-prior_folder = f"pruning_vertices_auto/ioi_with_mlp/{prior_lamb}" 
+prior_folder = f"pruning_vertices_auto/gt/{prior_lamb}" 
 
 pretrained_folder = None
 # f"pruning_edges_auto/ioi/300.0"
@@ -88,7 +88,7 @@ init_param = 0
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=init_param)
 pruning_cfg.lamb = reg_lamb
 
-task_ds = IOIConfig(pruning_cfg.batch_size, device)
+task_ds = GTConfig(pruning_cfg.batch_size, device)
 
 for param in model.parameters():
     param.requires_grad = False

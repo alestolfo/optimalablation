@@ -17,14 +17,16 @@ from itertools import cycle
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from circuit_utils import edge_prune_mask, vertex_prune_mask, retrieve_mask, discretize_mask, prune_dangling_edges, get_ioi_nodes, mask_to_edges, nodes_to_mask, nodes_to_vertex_mask, mask_to_nodes, edges_to_mask
+from circuit_utils import edge_prune_mask, vertex_prune_mask, retrieve_mask, discretize_mask, prune_dangling_edges, get_ioi_nodes, mask_to_edges, nodes_to_mask, nodes_to_vertex_mask, mask_to_nodes, edges_to_mask, get_ioi_edge_mask
 from training_utils import LinePlot
 
 # %%
 
 class InferenceConfig:
-    def __init__(self, device, folder, n_layers):
+    def __init__(self, device, folder, cfg):
         self.device = device
+        self.n_layers = cfg.n_layers
+        self.n_heads = cfg.n_heads
 
         self.folder = folder
         self.lamb = None
@@ -36,10 +38,10 @@ class InferenceConfig:
         self.hard_concrete_endpoints = (-0.1, 1.1)
 
         self.layers_to_prune = []
-        for layer_no in range(n_layers):
+        for layer_no in range(self.n_layers):
             self.layers_to_prune.append(("attn", layer_no))
             self.layers_to_prune.append(("mlp", layer_no))
-        self.layers_to_prune.append(("mlp", n_layers))
+        self.layers_to_prune.append(("mlp", self.n_layers))
 
         self.temp_min_reg = 0.001
         self.temp_adj_intv = 10
@@ -73,6 +75,15 @@ class InferenceConfig:
                 ]
                 for k in self.constant_prune_mask
             }
+
+    def initialize_params_probs(self, init_param):
+        self.init_params = {
+            k: [
+                mask_tensor.squeeze(0).to(self.device).unsqueeze(-1) * init_param
+                for mask_tensor in self.constant_prune_mask[k]
+            ]
+            for k in self.constant_prune_mask
+        }
 
     def reset_temp(self):
         self.temp_c = 0
@@ -121,10 +132,12 @@ class InferenceConfig:
         lp_count.plot(save=f"{self.folder}/train-step{j}.png")
 
         plot_1 = ['kl_loss', 'complexity_loss']
-        if component_pruner.node_reg > 0:
+        if 'node_loss' in component_pruner.log.stat_book:
             plot_1.append('node_loss')
         component_pruner.log.plot(plot_1, save=f"{self.folder}/train-loss{j}.png")
-        component_pruner.log.plot(['temp', 'temp_cond', 'temp_count', 'temp_reg'], save=f"{self.folder}/train-temp{j}.png")
+
+        if 'temp' in component_pruner.log.stat_book:
+            component_pruner.log.plot(['temp', 'temp_cond', 'temp_count', 'temp_reg'], save=f"{self.folder}/train-temp{j}.png")
 
         pruner_dict = component_pruner.state_dict()
         pruner_dict = {k: pruner_dict[k] for k in pruner_dict if not k.startswith("base_model")}
@@ -168,7 +181,7 @@ class InferenceConfig:
             previous_state = torch.load(pretrained_snapshot_path)
             component_pruner.load_state_dict(previous_state['pruner_dict'], strict=False)
         
-        return LinePlot(['step_size', 'mode_step_size'])
+        return LinePlot(['step_size', 'mode_step_size', 'max_grad_norm'])
     
     def record_post_training(self, mask_sampler, component_pruner, ds_test, next_batch, in_format="edges", out_format="edges", load_edges=False):
         log = {"lamb": [], "tau": [], "losses": []}
@@ -179,23 +192,23 @@ class InferenceConfig:
         for lamb_path in glob.glob(f"{self.folder}/*"):
             lamb = lamb_path.split("/")[-1]
             print(lamb)
-            try:
-                float(lamb[-1])
-                float(lamb[0])
-
-                if load_edges:
-                    edge_list = torch.load(f"{self.folder}/edges_{lamb}.pth")
-                    prune_mask = edges_to_mask(edge_list)
-                    prune_mask, c_e, clipped_e, _, _ = prune_dangling_edges(prune_mask)
-                else:
-                    prune_mask = retrieve_mask(lamb_path)
-            except:
-                if lamb == "manual":
-                    ioi_nodes = get_ioi_nodes()
-                    prune_mask = nodes_to_vertex_mask(ioi_nodes)
-                else:
+            # if lamb =="manual":
+                # if in_format == "edges":
+                #     prune_mask = get_ioi_edge_mask()
+                #     # prune_mask = edges_to_mask(ioi_edges)
+                # else:
+                #     ioi_nodes = get_ioi_nodes()
+                #     prune_mask = nodes_to_vertex_mask(ioi_nodes)
+            if load_edges and (lamb == "manual" or lamb[1] == "." or lamb[1:3] == "e-"):
+                edge_list = torch.load(f"{self.folder}/edges_{lamb}.pth")
+                prune_mask = edges_to_mask(edge_list)
+            else:
+                try:
+                    float(lamb[-1])
+                    float(lamb[0])
+                except:
                     continue
-
+                prune_mask = retrieve_mask(lamb_path)
 
             files = glob.glob(f"{lamb_path}/fit_modes_*.pth")
             for tau_path in files:
@@ -205,9 +218,9 @@ class InferenceConfig:
                     tau = float(tau)
                 except: 
                     continue
-
-                discrete_mask = discretize_mask(prune_mask, tau)
                 
+                discrete_mask = discretize_mask(prune_mask, tau)
+                                    
                 if in_format=="edges":
                     discrete_mask, edges, clipped_edges, _, _ = prune_dangling_edges(discrete_mask)
                 elif out_format=="edges":
@@ -242,7 +255,7 @@ class InferenceConfig:
     
 class EdgeInferenceConfig(InferenceConfig):
     def __init__(self, cfg, device, folder, batch_size=None, init_param=-0.5, init_scale=None, prior=None, prior_scale=0):
-        super().__init__(device, folder, cfg.n_layers)
+        super().__init__(device, folder, cfg)
 
         if batch_size is not None:
             self.batch_size = batch_size
@@ -257,12 +270,9 @@ class EdgeInferenceConfig(InferenceConfig):
 
         self.initialize_params(init_param, init_scale)
 
-
-
-    
 class VertexInferenceConfig(InferenceConfig):
     def __init__(self, cfg, device, folder, batch_size=None, init_param=-0.5, init_scale=None):
-        super().__init__(device, folder, cfg.n_layers)
+        super().__init__(device, folder, cfg)
         
         if batch_size is None:
             self.batch_size = 10

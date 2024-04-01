@@ -17,7 +17,7 @@ model_name = "gpt2-small"
 owt_batch_size = 10
 device, model, tokenizer, owt_iter = load_model_data(model_name, owt_batch_size)
 model.train()
-model.cfg.use_attn_result = True
+# model.cfg.use_attn_result = True
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
@@ -69,7 +69,7 @@ modal_optimizer = torch.optim.AdamW([vertex_pruner.modal_attention, vertex_prune
 
 # %%
 
-max_batches = 4000
+max_batches = 6000
 for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
 
     modal_optimizer.zero_grad()
@@ -85,6 +85,6 @@ for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
     modal_optimizer.step()
 
     if no_batches % -100 == -1:
-        torch.save({"modal_attention": vertex_pruner.modal_attention}, f"{folder}/fit_modes_{tau}.pth")
+        torch.save({"modal_attention": vertex_pruner.modal_attention, "modal_mlp": vertex_pruner.modal_mlp}, f"{folder}/fit_modes_{tau}.pth")
         vertex_pruner.log.plot(["kl_loss"], mv=100, save=f"{folder}/fit_modes_{tau}.png")
 # %%
