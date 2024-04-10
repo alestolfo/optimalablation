@@ -1,4 +1,6 @@
 *.pkl
 *.pt
 *.pth
+old_results/*
 SAE_training/SAE_*
+*/__pycache__/*
