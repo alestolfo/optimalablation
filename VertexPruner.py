@@ -30,6 +30,7 @@ class VertexPruner(torch.nn.Module):
         self.base_model = model
         self.pruning_cfg = pruning_cfg
         self.mask_sampler = mask_sampler
+        self.all_gradients = False
 
         init_modes_attention, init_modes_mlp = init_modes
         self.modal_attention = torch.nn.Parameter(init_modes_attention)
@@ -63,10 +64,15 @@ class VertexPruner(torch.nn.Module):
 
         bos_out = attentions[:,[0]].clone().detach()
         prune_mask = self.mask_sampler.sampled_mask['attn'][layer_no].unsqueeze(1).unsqueeze(-1)
-        attentions[bsz:] = (
-            (prune_mask < 0.001) * (1-prune_mask) * self.modal_attention[layer_no]
-            + (prune_mask >= 0.001) * (1-prune_mask) * self.modal_attention[layer_no].detach()
-        ) + prune_mask * attentions[bsz:].clone()
+        if self.all_gradients:
+            attentions[bsz:] = (
+                (1-prune_mask) * self.modal_attention[layer_no]
+            ) + prune_mask * attentions[bsz:].clone()
+        else:
+            attentions[bsz:] = (
+                (prune_mask < 0.001) * (1-prune_mask) * self.modal_attention[layer_no]
+                + (prune_mask >= 0.001) * (1-prune_mask) * self.modal_attention[layer_no].detach()
+            ) + prune_mask * attentions[bsz:].clone()
 
         # prune_idx = prune_mask.clone()
         # attentions[bsz + prune_idx[:,0],:,prune_idx[:,1]] = prune_idx * constants[prune_idx[:,1]]
@@ -82,10 +88,15 @@ class VertexPruner(torch.nn.Module):
 
         bos_out = mlp_out[:,[0]].clone().detach()
         prune_mask = self.mask_sampler.sampled_mask['mlp'][layer_no].unsqueeze(1).unsqueeze(-1)
-        mlp_out[bsz:] = (
-            (prune_mask < 0.001) * (1-prune_mask) * self.modal_mlp[layer_no]
-            + (prune_mask >= 0.001) * (1-prune_mask) * self.modal_mlp[layer_no].detach()
-        ) + prune_mask * mlp_out[bsz:].clone()
+        if self.all_gradients:
+            mlp_out[bsz:] = (
+                (prune_mask < 0.001) * (1-prune_mask) * self.modal_mlp[layer_no]
+                + (prune_mask >= 0.001) * (1-prune_mask) * self.modal_mlp[layer_no].detach()
+            ) + prune_mask * mlp_out[bsz:].clone()
+        else:
+            mlp_out[bsz:] = (
+                (1-prune_mask) * self.modal_mlp[layer_no]
+            ) + prune_mask * mlp_out[bsz:].clone()
 
         # prune_idx = prune_mask.clone()
         # attentions[bsz + prune_idx[:,0],:,prune_idx[:,1]] = prune_idx * constants[prune_idx[:,1]]

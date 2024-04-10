@@ -27,6 +27,7 @@ class MaskSampler(torch.nn.Module):
             ]) for k in pruning_cfg.init_params
         })
 
+        self.fix_mask = False
         self.sampled_mask = None
         self.use_temperature = True
         self.temp_c = 0
@@ -56,12 +57,12 @@ class MaskSampler(torch.nn.Module):
         prune_mask = {}
         for k in self.sampling_params:
             prune_mask[k] = []
-            for i in range(len(self.sampling_params[k])):
-                # if sampling_params[k][i].nelement() == 0:
+            for ts in self.sampling_params[k]:
+                # if ts.nelement() == 0:
                 #     prune_mask[k].append(None)
                 #     continue
-                unif = torch.rand((bsz, *self.sampling_params[k][i].shape[:-1])).to(self.pruning_cfg.device)
-                prune_mask[k].append(self.sampling_function(unif, self.sampling_params[k][i]))
+                unif = torch.rand((bsz, *ts.shape[:-1])).to(self.pruning_cfg.device)
+                prune_mask[k].append(self.sampling_function(unif, ts))
 
         self.sampled_mask = prune_mask
         
@@ -121,7 +122,8 @@ class MaskSampler(torch.nn.Module):
         return mask_loss, mask_details
     
     def forward(self):
-        self.sample_mask()
+        if not self.fix_mask:
+            self.sample_mask()
         return self.get_mask_loss() 
 
     def take_snapshot(self, j):
@@ -178,7 +180,8 @@ class EdgeMaskJointSampler(MaskSampler):
         return F.tanh(2 * (node_losses_out + torch.stack(node_losses_in, dim=0)) / (n_layers * n_heads))        
 
     def forward(self):
-        self.sample_mask()
+        if not self.fix_mask:
+            self.sample_mask()
 
         bsz = self.pruning_cfg.n_samples * self.pruning_cfg.batch_size
         prune_mask = self.sampled_mask
@@ -272,12 +275,12 @@ class EdgeMaskBernoulliSampler(EdgeMaskUnifSampler):
         cand_mask = {}
         for k in self.sampling_params:
             cand_mask[k] = []
-            for i in range(len(self.sampling_params[k])):
+            for ts in self.sampling_params[k]:
                 # if sampling_params[k][i].nelement() == 0:
                 #     prune_mask[k].append(None)
                 #     continue
-                unif = torch.rand((big_bsz, *self.sampling_params[k][i].shape[:-1])).to(self.pruning_cfg.device)
-                cand_mask[k].append(self.sampling_function(unif, self.sampling_params[k][i]))
+                unif = torch.rand((big_bsz, *ts.shape[:-1])).to(self.pruning_cfg.device)
+                cand_mask[k].append(self.sampling_function(unif, ts))
 
         filtered_mask = prune_dangling_edges(cand_mask, bsz=big_bsz)
         
@@ -294,13 +297,14 @@ class EdgeMaskBernoulliSampler(EdgeMaskUnifSampler):
 
         mask_loss = torch.zeros(bsz,).to(self.pruning_cfg.device)
         prune_mask = {}
-        for k in self.sampling_params:
+        for k in cand_mask:
             prune_mask[k] = []
-            for i in range(len(self.sampling_params[k])):
+            for ts in cand_mask[k]:
                 # unif = torch.rand((bsz, *self.sampling_params[k][i].shape[:-1])).to(self.pruning_cfg.device)
                 # prune_mask[k].append(self.sampling_function(unif, self.sampling_params[k][i]))
-                prune_mask[k].append(cand_mask[k][i][indices])     
-                mask_loss = mask_loss + prune_mask[k][i].flatten(start_dim=1,end_dim=-1).sum(dim=1)   
+                ts = ts[indices]
+                prune_mask[k].append(ts)     
+                mask_loss = mask_loss + ts.flatten(start_dim=1,end_dim=-1).sum(dim=1)   
         self.sampled_mask = prune_mask
         self.mask_loss = mask_loss
 
@@ -330,7 +334,8 @@ class EdgeMaskBernoulliSampler(EdgeMaskUnifSampler):
         return mask_loss, mask_details
         
     def forward(self):
-        self.sample_mask()
+        if not self.fix_mask:
+            self.sample_mask()
         
         mask_loss, mask_details = self.get_mask_loss()
 
@@ -423,6 +428,96 @@ class ConstantMaskSampler():
         self.sampled_mask = mask
 
     def __call__(self):
+        return 0, {}
+
+    def record_state(self, j):
+        pass
+
+class SingleComponentMaskSampler(torch.nn.Module):
+    def __init__(self, pruning_cfg, retain_all=False):
+        self.use_temperature = False
+        self.log_columns = []
+
+        n_layers = pruning_cfg.n_layers
+        n_heads = pruning_cfg.n_heads
+        device = pruning_cfg.device
+
+        total_heads = n_layers * n_heads
+
+        # [bsz, n_layers, n_heads]
+        attn_mask = (torch.ones((total_heads, total_heads)) 
+                     
+                     - torch.eye(total_heads))
+        attn_mask = attn_mask.unflatten(1, (n_layers, -1)).to(device)
+        self.fixed_mask = {
+            "attn": [
+                attn_mask[:, i]
+                for i in range(n_layers)
+            ],
+            "mlp": [
+                torch.ones((total_heads,)).to(device) 
+                for i in range(n_layers)
+            ]
+        }
+        self.mask_perturb = torch.nn.ParameterDict({
+            "attn": torch.nn.ParameterList([
+                torch.nn.Parameter(torch.zeros((total_heads,)).to(device)) 
+                for i in range(n_layers)
+            ]),
+            "mlp": torch.nn.ParameterList([
+                torch.nn.Parameter(torch.zeros((total_heads,)).to(device)) 
+                for i in range(n_layers)
+            ])
+        })
+
+    def forward(self):
+
+        self.sampled_mask = 
+        return 0, {}
+
+    def record_state(self, j):
+        pass
+
+class MultiComponentMaskSampler(torch.nn.Module):
+    def __init__(self, pruning_cfg, prop_sample=0.1):
+        self.sampled_mask = None
+
+        self.use_temperature = False
+        self.log_columns = []
+
+        self.n_layers = pruning_cfg.n_layers
+        self.n_heads = pruning_cfg.n_heads
+        self.device = pruning_cfg.device
+        self.bsz = pruning_cfg.batch_size * pruning_cfg.n_samples
+
+        self.prop_sample = prop_sample
+
+
+
+    def forward(self):
+        total_heads = self.n_layers * self.n_heads
+        sampled_heads = math.ceil(self.prop_sample * total_heads)
+
+        # select random subset
+        ref_idx = torch.arange(sampled_heads).unsqueeze(-1).repeat(1, sampled_heads)
+        _, top_k_idx = torch.rand((total_heads, total_heads)).topk(sampled_heads, dim=-1)
+
+        attn_mask = torch.ones((total_heads, total_heads))
+        attn_mask[ref_idx.flatten(), top_k_idx.flatten()] = 0
+        attn_mask = attn_mask + (1-attn_mask) * torch.rand_like(attn_mask)
+        attn_mask = attn_mask.unflatten(1, (self.n_layers, -1)).to(self.device)
+
+        self.sampled_mask = {
+            "attn": [
+                torch.nn.Parameter(attn_mask[:, i]) 
+                for i in range(self.n_layers)
+            ],
+            "mlp": [
+                torch.nn.Parameter(torch.ones((total_heads,)).to(self.device)) 
+                for i in range(self.n_layers)
+            ]
+        }
+
         return 0, {}
 
     def record_state(self, j):

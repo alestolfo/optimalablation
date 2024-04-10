@@ -1,3 +1,4 @@
 *.pkl
 *.pt
+*.pth
 SAE_training/SAE_*

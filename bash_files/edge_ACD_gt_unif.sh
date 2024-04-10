@@ -6,7 +6,7 @@ sbatch <<EOT
 #!/bin/bash
 #SBATCH -c 1
 #SBATCH -p seas_gpu
-#SBATCH --job-name=$var-gt-edge_pruning
+#SBATCH --job-name=unif-$var-gt-edge_pruning
 #SBATCH --constraint="a100"
 #SBATCH --gpus 1
 #SBATCH --mem=32000
@@ -17,7 +17,7 @@ sbatch <<EOT
 # Your commands here
 module load Anaconda2
 conda activate take2
-python3 edge_pruning_gt.py --lamb $var
+python3 edge_pruning_gt_unif.py --lamb $var
 
 EOT
 done

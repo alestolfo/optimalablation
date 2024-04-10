@@ -5,9 +5,8 @@ do
 sbatch <<EOT
 #!/bin/bash
 #SBATCH -c 1
-#SBATCH -p gpu_requeue
+#SBATCH -p gpu
 #SBATCH --job-name=$var-ioi-edge_pruning
-#SBATCH --constraint="a100"
 #SBATCH --gpus 1
 #SBATCH --mem=32000
 #SBATCH -t 0-12:00

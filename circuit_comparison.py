@@ -66,11 +66,17 @@ out_folder = f"similarities/{task_name}"
     # # "pruning_edges_auto-2-26/ioi_zero_init",
 
 tau = -1
+training_dfs = {}
 all_masks = {}
 for task in folders:
     for k in task:
         folder = task[k]
         print(folder)
+        if os.path.exists(f"{folder}/post_training.pkl"):
+            with open(f"{folder}/post_training.pkl", "rb") as f:
+                post_training = pickle.load(f)
+                post_training_df = pd.DataFrame(post_training)
+                training_dfs[k] = post_training_df
         for lamb_path in glob.glob(f"{folder}/*"):
             lamb = lamb_path.split("/")[-1]
             print(lamb_path)
@@ -104,7 +110,16 @@ for task in folders:
             print(prune_mask.keys())
             prune_mask, _, c_e, attn_ct, mlp_ct = prune_dangling_edges(prune_mask)
             print(lamb_path)
-            all_masks[lamb_path] = (c_e, prune_mask, attn_ct, mlp_ct)
+
+            loss = None
+            if k in training_dfs:
+                lamb_rows = training_dfs[k][(training_dfs[k]['lamb'] == lamb)]
+                if len(lamb_rows[lamb_rows['tau'] == tau]) > 0:
+                    loss = lamb_rows[lamb_rows['tau'] == tau].iloc[0]['losses']
+                elif len(lamb_rows) > 0:
+                    loss = lamb_rows.iloc[0]['losses']
+
+            all_masks[lamb_path] = (c_e, prune_mask, attn_ct, mlp_ct, loss)
 
 # %%
 def get_mask_smiliarities(all_masks, output_folder):
@@ -117,12 +132,13 @@ def get_mask_smiliarities(all_masks, output_folder):
         print(k)
         similarities.append({"key1": k})
         node_similarities.append({"key1": k})
-        edges_1, mask_1, attn_1, mlp_1 = all_masks[k]
+        edges_1, mask_1, attn_1, mlp_1, loss = all_masks[k]
         total_nodes_1 = (attn_1 > 0).sum().item() + (mlp_1 > 0).sum().item()
-        total_nodes.append({"key":k, "nodes": total_nodes_1, "edges": edges_1})
+
+        total_nodes.append({"key":k, "nodes": total_nodes_1, "edges": edges_1, "loss": loss})
 
         for ell in all_masks:
-            edges_2, mask_2, attn_2, mlp_2 = all_masks[ell]
+            edges_2, mask_2, attn_2, mlp_2, _ = all_masks[ell]
 
             similarity = np.sum([(m1 * mask_2[key][i] > 0).sum().item() for key in mask_1 for i, m1 in enumerate(mask_1[key])])
 
@@ -153,7 +169,7 @@ def get_similarities_manual(all_masks, output_folder):
     for k in all_masks:
         print(k)
         df.append({"key": k, "typ": k.split("/")[-2], "process": k.split("/")[0]})
-        edges, mask, attn, mlp = all_masks[k]
+        edges, mask, attn, mlp, _ = all_masks[k]
 
         print(edges)
 
@@ -200,14 +216,16 @@ acdc_roc_curve = acdc_roc_curve['trained']['random_ablation'][{"ioi": "ioi", "gt
 
 size=15
 pct_vert=0.06
-pct_y=.2
+pct_y=0.8
 stretch=6
 plt.figure(figsize=(pct_vert * stretch * size, size * pct_y))
-# sns.scatterplot(x=acdc_roc_curve["edge_fpr"], y=acdc_roc_curve["edge_tpr"], label="ACDC (as advertised)")
 
 for k in task:
     filt_df = roc_df[roc_df["typ"] == task[k].split("/")[-1]]
     sns.scatterplot(x=filt_df["FPR_edges"], y=filt_df["TPR_edges"], label=k)
+
+sns.scatterplot(x=acdc_roc_curve["edge_fpr"], y=acdc_roc_curve["edge_tpr"], label="ACDC (as advertised)")
+
 plt.xlim(0,pct_vert)
 plt.ylim(0,pct_y)
 plt.legend(loc="lower right")

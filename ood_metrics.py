@@ -42,8 +42,8 @@ model.eval()
 # model.cfg.use_attn_result = True
 
 # %%
-# task_ds = OWTConfig(owt_iter, device)
-task_ds = IOIConfig(batch_size, device)
+task_ds = OWTConfig(owt_iter, device)
+# task_ds = IOIConfig(batch_size, device)
 # task_ds = GTConfig(batch_size, device)
 
 # %%
@@ -59,7 +59,6 @@ resid_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_re
 attention_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.attn.hook_z"
 resid_post_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_resid_post"
 final_embed_filter = lambda name: name == f"blocks.{n_layers-1}.hook_resid_post"
-
 
 # %%
 
@@ -164,9 +163,14 @@ def resample_ablation_hook_attention_all_tokens(bsz, attentions, hook):
 def mode_ablation_hook_attention_all_tokens(constants, bsz, attentions, hook):
     n_heads = constants.shape[0]
     start = bsz * n_heads
-    for i in range(n_heads):
-        attentions[-start:(attentions.shape[0] if -start+bsz == 0 else -start + bsz),:,i] = constants[i].clone()
-        start -= bsz
+    attentions[-start:] = 100
+    # print(start)
+    # for i in range(n_heads):
+    #     attentions[-start:(attentions.shape[0] if -start+bsz == 0 else -start + bsz)] = 100
+    #     start -= bsz
+    # print(start)
+    # print(attentions.shape)
+    # attentions[-start:] = 100
     return attentions
 
 def ood_hook_last_token(ood_metric_storage, last_token_mask, layer_no, resid, hook):
@@ -206,7 +210,7 @@ all_kl = None
 for i in tqdm(range(60)):
     # modify depending on the dataset
 
-    batch, last_token_pos = task_ds.next_batch(tokenizer)
+    batch, last_token_pos = task_ds.next_batch()
         
     with torch.no_grad():
         last_token_mask = torch.zeros_like(batch).to(device)
@@ -227,12 +231,12 @@ for i in tqdm(range(60)):
                             batch_size,
                             n_heads)
                         ) for layer_no in range(n_layers)],
-                    *[(partial(resid_post_filter, layer_no), 
-                    partial(ood_hook_last_token,
-                            metric_storage,
-                            last_token_mask,
-                            layer_no)
-                        ) for layer_no in range(n_layers)],
+                    # *[(partial(resid_post_filter, layer_no), 
+                    # partial(ood_hook_last_token,
+                    #         metric_storage,
+                    #         last_token_mask,
+                    #         layer_no)
+                    #     ) for layer_no in range(n_layers)],
                     (final_embed_filter,
                     partial(final_hook_all_tokens,
                                 last_token_mask))
@@ -250,6 +254,9 @@ for i in tqdm(range(60)):
         # might need to fix this ???
         kl_losses = kl_loss(ablated_results, target_results.exp()).sum(dim=-1)
 
+        print(kl_losses.mean())
+        sns.histplot(kl_losses.flatten().detach().cpu())
+        plt.show()
         if all_metric_storage is None:
             all_metric_storage = metric_storage
             all_kl = kl_losses

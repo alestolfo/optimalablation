@@ -36,7 +36,7 @@ class OWTConfig():
             init_modes_mlp = pickle.load(f)
         return init_modes_attention[:,-1], init_modes_mlp[:,-1]
 
-    def next_batch(self):
+    def next_batch(self, tokenizer=None):
         # BOS is already prepended
         batch = next(self.ds_iter)['tokens'].to(self.device)
         return batch, batch.shape[1] - 1

@@ -19,7 +19,7 @@ sbatch <<EOT
 # Your commands here
 module load Anaconda2
 conda activate take2
-python3 vertex_post_training.py $var $temp
+python3 vertex_post_training_gt.py $var $temp
 
 EOT
 done

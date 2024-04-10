@@ -11,14 +11,17 @@ sns.set(rc={"xtick.bottom" : True, "ytick.left" : True})
 
 
 # %%
-def plot_points(k, x):
+def plot_points(k, x, color=None):
     print(x)
     if os.path.exists(f"{x}/post_training.pkl"):
         with open(f"{x}/post_training.pkl", "rb") as f:
             log = pickle.load(f)
         # print(log)
         print(log['tau'])
-        ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k} post training", marker="X", s=50)
+        if color is not None:
+            ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k} post training", marker="X", s=50, color=color)
+        else:
+            ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k} post training", marker="X", s=50)
 
         for i,t in enumerate(log['tau']):
             print(t, log["lamb"][i], log['clipped_edges'][i], log['losses'][i])
@@ -27,7 +30,7 @@ def plot_points(k, x):
     return ax
 
 def plot_pareto(pms):
-    folder, manual_folder, y_bound, x_bound = pms
+    folder, manual_folder, y_bound, x_bound, task_name = pms
 
     fig = plt.figure(figsize=(10,15))
 
@@ -62,7 +65,10 @@ def plot_pareto(pms):
         plot_points(k, x)
     
     for k, x in manual_folder.items():
-        ax = plot_points(k,x)
+        if k == "ACDC":
+            ax = plot_points(k,x, color="black")
+        else:
+            ax = plot_points(k,x)
         if os.path.exists(f"{x}/pre_training.pkl"):
             with open(f"{x}/pre_training.pkl", "rb") as f:
                 log = pickle.load(f)
@@ -80,6 +86,7 @@ def plot_pareto(pms):
     plt.gca().yaxis.set_major_locator(MultipleLocator(0.01)) # y gridlines every 0.5 units
     plt.xlabel("Edges kept")
     plt.ylabel("KL divergence")
+    plt.savefig(f"pareto/{task_name}.png")
     plt.show()
 
 # %%
@@ -93,7 +100,8 @@ folders=[
         "edges uniform": "pruning_edges_auto/ioi_edges_unif", 
     }, {
         "ACDC": "acdc_ioi_runs",
-    }, 0.15, 3000),
+        "eap": "eap_ioi_runs"
+    }, 0.15, 3000, "ioi"),
     ({
         "vertex": "pruning_vertices_auto/gt", 
         "edges HC": "pruning_edges_auto/gt_edges", 
@@ -101,7 +109,8 @@ folders=[
         "edges uniform": "pruning_edges_auto/gt_edges_unif", 
     }, {
         "ACDC": "acdc_gt_runs",
-    }, 0.04,1500),
+        "eap": "eap_gt_runs"
+    }, 0.05,1000,"gt"),
 ]
 
 for folder in folders:

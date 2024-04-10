@@ -7,7 +7,7 @@ do
 sbatch <<EOT
 #!/bin/bash
 #SBATCH -c 1
-#SBATCH -p gpu_test
+#SBATCH -p gpu
 #SBATCH --job-name=$var-post-train
 #SBATCH --gpus 1
 #SBATCH --mem=32000
@@ -18,7 +18,7 @@ sbatch <<EOT
 # Your commands here
 module load Anaconda2
 conda activate take2
-python3 edge_post_training.py -s ioi_edges_unif -t "0" -l $var
+python3 edge_post_training_long.py $var -1
 
 EOT
 done

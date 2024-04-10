@@ -34,13 +34,13 @@ try:
 except:
     reg_lamb=1e-4
 
-folder=f"pruning_edges_auto/ioi_edges_unif"
+folder=f"pruning_edges_auto/gt_edges_unif"
 load_edges = False
 
 batch_size=50
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
 pruning_cfg.lamb = reg_lamb
-task_ds = IOIConfig(batch_size, device)
+task_ds = GTConfig(batch_size, device)
 ds_test = task_ds.get_test_set(tokenizer)
 
 for param in model.parameters():
@@ -55,4 +55,6 @@ edge_pruner.add_patching_hooks()
 # %%
 next_batch = partial(task_ds.next_batch, tokenizer)
 pruning_cfg.record_post_training(mask_sampler, edge_pruner, ds_test, next_batch, load_edges=load_edges)
+# %%
+
 # %%
