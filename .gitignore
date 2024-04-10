@@ -4,3 +4,4 @@
 old_results/*
 SAE_training/SAE_*
 */__pycache__/*
+*.pyc
