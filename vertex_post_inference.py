@@ -40,7 +40,7 @@ for param in model.parameters():
 
 # %%
 mask_sampler = ConstantMaskSampler()
-vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
+vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
 vertex_pruner.add_patching_hooks()
 
 # %%
