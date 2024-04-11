@@ -64,6 +64,8 @@ class VertexPruner(torch.nn.Module):
 
         bos_out = attentions[:,[0]].clone().detach()
         prune_mask = self.mask_sampler.sampled_mask['attn'][layer_no].unsqueeze(1).unsqueeze(-1)
+        print(prune_mask.shape)
+        print(attentions.shape)
         if self.all_gradients:
             attentions[bsz:] = (
                 (1-prune_mask) * self.modal_attention[layer_no]
@@ -159,7 +161,7 @@ class VertexPruner(torch.nn.Module):
             last_token_mask[torch.arange(last_token_mask.shape[0]), last_token_pos] = 1
         
         self.last_token_mask = last_token_mask        
-        n_samples = 1 if self.inference_mode else self.pruning_cfg.n_samples
+        n_samples = self.pruning_cfg.n_samples
         
         if self.mask_sampler.use_temperature:
             self.mask_sampler.set_temp_c(self.pruning_cfg.temp_scheduler(self.log))

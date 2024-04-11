@@ -37,6 +37,8 @@ folder=f"pruning_edges_auto/ioi_iter/{reg_lamb}"
 batch_size = 75
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
 pruning_cfg.lamb = reg_lamb
+pruning_cfg.n_samples = 1
+
 task_ds = IOIConfig(batch_size, device)
 
 for param in model.parameters():
@@ -44,7 +46,7 @@ for param in model.parameters():
 
 # %%
 mask_sampler = ConstantMaskSampler()
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True, ablation_backward=True)
+edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, ablation_backward=True)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 

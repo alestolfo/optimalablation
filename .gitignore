@@ -5,3 +5,6 @@ old_results/*
 SAE_training/SAE_*
 */__pycache__/*
 *.pyc
+*9.png
+*kl_losses.png
+*/mask.png

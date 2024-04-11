@@ -51,14 +51,9 @@ else:
 if not os.path.exists(folder):
     os.makedirs(folder)
 
-batch_size = 1
-n_samples = n_layers * n_heads
-
 pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, init_param=1)
-pruning_cfg.batch_size = batch_size
-pruning_cfg.n_samples = n_samples
-# pruning_cfg.lamb = 0
-# pruning_cfg.lr_modes = 5e-3
+pruning_cfg.batch_size = 1
+pruning_cfg.n_samples = n_layers * n_heads
 
 task_ds = IOIConfig(pruning_cfg.batch_size, device)
 
@@ -70,8 +65,33 @@ mask_sampler = SingleComponentMaskSampler(pruning_cfg)
 vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 vertex_pruner.add_patching_hooks()
 
+
+# %%
+
+max_batches = 100
+for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
+    batch, last_token_pos = task_ds.next_batch(tokenizer)
+    last_token_pos = last_token_pos.int()
+
+    loss = vertex_pruner(batch, last_token_pos)
+
+    print(loss)
+    break
+
+
+
 # sampling_optimizer = torch.optim.AdamW(mask_sampler.parameters(), lr=pruning_cfg.lr, weight_decay=0)
 # modal_optimizer = torch.optim.AdamW([vertex_pruner.modal_attention, vertex_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
+
+# %%
+
+# get mean ablation loss
+# back-prop: 
+
+# %%
+
+
+
 
 # %%
 

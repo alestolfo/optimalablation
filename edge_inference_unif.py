@@ -37,6 +37,7 @@ out_path=f"pruning_edges_auto/ioi_edges_unif/report/{str(reg_lamb).replace('.', 
 batch_size = 10
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
 pruning_cfg.lamb = reg_lamb
+pruning_cfg.n_samples = 1
 pruning_cfg.initialize_params_probs(1)
 task_ds = IOIConfig(batch_size, device)
 ds_test = task_ds.get_test_set(tokenizer)
@@ -46,14 +47,14 @@ for param in model.parameters():
 
 # %%
 # mask_sampler = ConstantMaskSampler()
-# edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
+# edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 # edge_pruner.add_cache_hooks()
 # edge_pruner.add_patching_hooks()
 
 # %%
 
 mask_sampler = EdgeMaskUnifSampler(pruning_cfg, node_reg=5e-3)
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
+edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 

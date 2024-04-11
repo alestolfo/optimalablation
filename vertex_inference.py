@@ -36,6 +36,8 @@ base_folder = f"pruning_vertices_auto/ioi_with_mlp"
 batch_size = 50
 pruning_cfg = VertexInferenceConfig(model.cfg, device, None, batch_size=batch_size)
 pruning_cfg.lamb = reg_lamb
+pruning_cfg.n_samples = 1
+
 task_ds = IOIConfig(batch_size, device)
 ds_test = task_ds.get_test_set(tokenizer)
 
@@ -44,7 +46,7 @@ for param in model.parameters():
 
 # %%
 mask_sampler = ConstantMaskSampler()
-vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
+vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 vertex_pruner.add_patching_hooks()
 
 # %%
