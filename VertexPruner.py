@@ -64,8 +64,6 @@ class VertexPruner(torch.nn.Module):
 
         bos_out = attentions[:,[0]].clone().detach()
         prune_mask = self.mask_sampler.sampled_mask['attn'][layer_no].unsqueeze(1).unsqueeze(-1)
-        print(prune_mask.shape)
-        print(attentions.shape)
         if self.all_gradients:
             attentions[bsz:] = (
                 (1-prune_mask) * self.modal_attention[layer_no]

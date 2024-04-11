@@ -28,7 +28,7 @@ from task_datasets import IOIConfig, GTConfig
 model_name = "gpt2-small"
 owt_batch_size = 10
 device, model, tokenizer, owt_iter = load_model_data(model_name, owt_batch_size)
-model.train()
+model.eval()
 # model.cfg.use_attn_result = True
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
@@ -52,7 +52,7 @@ if not os.path.exists(folder):
     os.makedirs(folder)
 
 pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, init_param=1)
-pruning_cfg.batch_size = 5
+pruning_cfg.batch_size = 20
 pruning_cfg.n_samples = n_layers * n_heads
 
 task_ds = IOIConfig(pruning_cfg.batch_size, device)
@@ -70,7 +70,7 @@ vertex_pruner.add_patching_hooks()
 head_losses = torch.zeros((pruning_cfg.n_samples,1)).to(device)
 head_vars = torch.zeros((pruning_cfg.n_samples,1)).to(device)
 
-max_batches = 1000
+max_batches = 100
 
 for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
     batch, last_token_pos = task_ds.next_batch(tokenizer)
@@ -80,20 +80,22 @@ for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
         loss = vertex_pruner(batch, last_token_pos)
 
         # how to compute variance iteratively?
-        head_vars = head_vars + (loss - head_losses).square().sum(dim=-1) - (loss.mean(dim=-1) - head_losses).square()
-        head_losses = (no_batches * head_losses + loss.mean(dim=-1)) / (no_batches + 1)
+        head_vars = head_vars + (loss - head_losses).square().sum(dim=-1, keepdim=True) - (loss.mean(dim=-1, keepdim=True) - head_losses).square()
+        head_losses = (no_batches * head_losses + loss.mean(dim=-1, keepdim=True)) / (no_batches + 1)
 
-    if no_batches % -100 == -1:
+    if no_batches % -10 == -1:
         sns.histplot(head_losses.cpu().flatten())
+        plt.show()
+
         sns.histplot((head_vars / no_batches).cpu().flatten())
+        plt.show()
     
     no_batches += 1
-    break
 
 # sampling_optimizer = torch.optim.AdamW(mask_sampler.parameters(), lr=pruning_cfg.lr, weight_decay=0)
 # modal_optimizer = torch.optim.AdamW([vertex_pruner.modal_attention, vertex_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
 
-# %%
+yi# %%
 
 # get mean ablation loss
 # back-prop: 
