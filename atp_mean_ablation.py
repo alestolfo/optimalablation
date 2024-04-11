@@ -67,17 +67,28 @@ vertex_pruner.add_patching_hooks()
 
 # %%
 
-max_batches = 100
+head_losses = torch.zeros((pruning_cfg.n_samples,1)).to(device)
+head_vars = torch.zeros((pruning_cfg.n_samples,1)).to(device)
+
+max_batches = 1000
+
 for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
     batch, last_token_pos = task_ds.next_batch(tokenizer)
     last_token_pos = last_token_pos.int()
 
-    loss = vertex_pruner(batch, last_token_pos)
+    with torch.no_grad():
+        loss = vertex_pruner(batch, last_token_pos)
 
-    print(loss)
+        # how to compute variance iteratively?
+        head_vars = head_vars + (loss - head_losses).square().sum(dim=-1) - (loss.mean(dim=-1) - head_losses).square()
+        head_losses = (no_batches * head_losses + loss.mean(dim=-1)) / (no_batches + 1)
+
+    if no_batches % -100 == -1:
+        sns.histplot(head_losses.cpu().flatten())
+        sns.histplot((head_vars / no_batches).cpu().flatten())
+    
+    no_batches += 1
     break
-
-
 
 # sampling_optimizer = torch.optim.AdamW(mask_sampler.parameters(), lr=pruning_cfg.lr, weight_decay=0)
 # modal_optimizer = torch.optim.AdamW([vertex_pruner.modal_attention, vertex_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
