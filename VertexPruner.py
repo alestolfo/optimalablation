@@ -30,7 +30,7 @@ class VertexPruner(torch.nn.Module):
         self.base_model = model
         self.pruning_cfg = pruning_cfg
         self.mask_sampler = mask_sampler
-        self.all_gradients = False
+        self.all_gradients = True
 
         init_modes_attention, init_modes_mlp = init_modes
         self.modal_attention = torch.nn.Parameter(init_modes_attention)
@@ -40,6 +40,8 @@ class VertexPruner(torch.nn.Module):
         self.parallel_inference = parallel_inference
         self.ablation_backward = ablation_backward
         self.disable_hooks = False
+        self.cache_ablations = False
+        self.attn_ablation_cache = []
         
         columns = ['kl_loss', *self.mask_sampler.log_columns]
         self.log = LinePlot(columns)
@@ -57,22 +59,29 @@ class VertexPruner(torch.nn.Module):
             self.base_model.add_hook(name, hook)
 
     # attentions: (batch_size + batch_size * n_samples) x seq_len x n_heads x d_model
-    # constants: n_heads x d_model
+    # constants: n_heads x d_head
     # prune mask: (batch_size * n_samples) x n_heads, 0 = prune, 1 = keep
     def pruning_hook_attention_all_tokens(self, layer_no, attentions, hook):
         bsz = self.pruning_cfg.batch_size
 
+        if self.cache_ablations:
+            self.attn_ablation_cache.append((attentions[:bsz] - self.modal_attention[layer_no]).detach())
+
         bos_out = attentions[:,[0]].clone().detach()
         prune_mask = self.mask_sampler.sampled_mask['attn'][layer_no].unsqueeze(1).unsqueeze(-1)
+        ablated_attn = (
+            (prune_mask < 0.001) * (1-prune_mask) * self.modal_attention[layer_no]
+            + (prune_mask >= 0.001) * (1-prune_mask) * self.modal_attention[layer_no].detach()
+        ) + prune_mask * attentions[bsz:].clone()
+
         if self.all_gradients:
-            attentions[bsz:] = (
-                (1-prune_mask) * self.modal_attention[layer_no]
-            ) + prune_mask * attentions[bsz:].clone()
+            attentions[bsz:] = ablated_attn
         else:
+            # for grad sampling (attribution patching)
             attentions[bsz:] = (
-                (prune_mask < 0.001) * (1-prune_mask) * self.modal_attention[layer_no]
-                + (prune_mask >= 0.001) * (1-prune_mask) * self.modal_attention[layer_no].detach()
-            ) + prune_mask * attentions[bsz:].clone()
+                (prune_mask <= 1 - 1e-3) * ablated_attn
+                + (prune_mask > 1 - 1e-3) * prune_mask.detach() * attentions[bsz:].clone()
+            )
 
         # prune_idx = prune_mask.clone()
         # attentions[bsz + prune_idx[:,0],:,prune_idx[:,1]] = prune_idx * constants[prune_idx[:,1]]
@@ -80,23 +89,27 @@ class VertexPruner(torch.nn.Module):
         # return attentions
         return torch.cat([bos_out, attentions[:,1:]], dim=1)
 
-    # attentions: (batch_size + batch_size * n_samples) x seq_len x n_heads x d_model
-    # constants: n_heads x d_model
-    # prune mask: (batch_size * n_samples) x n_heads, 0 = prune, 1 = keep
+    # attentions: (batch_size + batch_size * n_samples) x seq_len x d_model
+    # constants: d_model
+    # prune mask: (batch_size * n_samples), 0 = prune, 1 = keep
     def pruning_hook_mlp_all_tokens(self, layer_no, mlp_out, hook):
         bsz = self.pruning_cfg.batch_size
 
         bos_out = mlp_out[:,[0]].clone().detach()
         prune_mask = self.mask_sampler.sampled_mask['mlp'][layer_no].unsqueeze(1).unsqueeze(-1)
+        ablated_mlp = (
+            (prune_mask < 0.001) * (1-prune_mask) * self.modal_mlp[layer_no]
+            + (prune_mask >= 0.001) * (1-prune_mask) * self.modal_mlp[layer_no].detach()
+        ) + prune_mask * mlp_out[bsz:].clone()
+
         if self.all_gradients:
-            mlp_out[bsz:] = (
-                (prune_mask < 0.001) * (1-prune_mask) * self.modal_mlp[layer_no]
-                + (prune_mask >= 0.001) * (1-prune_mask) * self.modal_mlp[layer_no].detach()
-            ) + prune_mask * mlp_out[bsz:].clone()
+            mlp_out[bsz:] = ablated_mlp
         else:
+            # for grad sampling (attribution patching)
             mlp_out[bsz:] = (
-                (1-prune_mask) * self.modal_mlp[layer_no]
-            ) + prune_mask * mlp_out[bsz:].clone()
+                (prune_mask <= 1 - 1e-3) * ablated_mlp
+                + (prune_mask > 1 - 1e-3) * prune_mask.detach() * mlp_out[bsz:].clone()
+            )
 
         # prune_idx = prune_mask.clone()
         # attentions[bsz + prune_idx[:,0],:,prune_idx[:,1]] = prune_idx * constants[prune_idx[:,1]]
@@ -153,6 +166,8 @@ class VertexPruner(torch.nn.Module):
             for x in range(6):
                 end.append(torch.cuda.Event(enable_timing=True))
             end[0].record()
+        
+        self.attn_ablation_cache.clear()
 
         with torch.no_grad():
             last_token_mask = torch.zeros_like(batch).to(self.pruning_cfg.device)

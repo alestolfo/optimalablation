@@ -110,6 +110,92 @@ def tuned_lens_hook(activation_storage, tuned_lens_weights, tuned_lens_bias, act
     activation_storage.append(einsum("result activation, batch activation -> batch result", tuned_lens_weights, act[:,-1]) + tuned_lens_bias)
     return act
 
+# rec = number of items to record
+# prev_means: rec x 1
+# prev_vars: rec x 1
+# batch_results: rec x n_samples
+# no batches: number of batches represented in prev_means and prev_variances
+# 
+def update_means_variances(prev_means, prev_vars, batch_results, no_batches):
+    # computing variance iteratively using a trick
+    prev_vars = prev_vars * (batch_results.shape[-1] * no_batches - 1)
+    vars = prev_vars + (batch_results - prev_means).square().sum(dim=-1, keepdim=True) - (batch_results.mean(dim=-1, keepdim=True) - prev_means).square()
+
+    no_batches = no_batches + 1
+
+    if batch_results.shape[-1] * no_batches > 1:
+        vars = vars / (batch_results.shape[-1] * no_batches - 1)
+
+    means = (no_batches * prev_means + batch_results.mean(dim=-1, keepdim=True)) / (no_batches + 1)
+
+    return means, vars
+
+# rec = number of items to record
+# prev_means: rec x 1
+# prev_vars: rec x 1
+# batch_results: rec x n_samples
+# n_batches_by_head: rec x 1
+# n_samples_by_head: rec x 1
+# batch_samples_by_head: rec x n_samples
+def update_means_variances_mixed(prev_means, prev_vars, batch_results, n_batches_by_head, n_samples_by_head, batch_samples_by_head):
+    # computing variance iteratively using a trick
+    new_batches_by_head = n_batches_by_head + (batch_samples_by_head > 0).sum(dim=-1, keepdim=True)
+    new_samples_by_head = n_samples_by_head + batch_samples_by_head.sum(dim=-1, keepdim=True)
+
+    means = (n_samples_by_head * prev_means + (batch_samples_by_head * batch_results).sum(dim=-1, keepdim=True)) / new_samples_by_head
+
+    prev_vars = prev_vars * (n_batches_by_head - 1)
+    vars = prev_vars + (batch_samples_by_head * (batch_results - prev_means).square()).sum(dim=-1, keepdim=True) - new_samples_by_head * (means - prev_means).square()
+    vars = torch.where(
+        vars > 0,
+        vars / (new_batches_by_head - 1),
+        vars
+    )
+    
+    return means, vars, new_batches_by_head, new_samples_by_head
+
+
+# %%
+
+# Unit test for update means variances mixed
+# true_means = (torch.randn((100,1)) * 50).to(device)
+# true_vars = (torch.randn((100,1)).abs() * 50).to(device)
+
+# est_means = torch.zeros_like(true_means).to(device)
+# est_vars = torch.zeros_like(true_means).to(device)
+# n_batches_by_head = torch.zeros_like(true_means).to(device)
+# n_samples_by_head = torch.zeros_like(true_means).to(device)
+
+# for b in range(100):
+#     mean_samples = []
+#     sample_counts = []
+#     for s in range(5):
+#         n_samples = (torch.randint(0,10,(100,1)) - 5).relu().to(device)
+#         idx_arr = torch.arange(10).unsqueeze(0).repeat(100,1).to(device)
+#         idx_mask = (idx_arr < n_samples) * 1
+
+#         batch_samples = true_vars.sqrt() * torch.randn((100,10)).to(device) + true_means
+#         batch_means = torch.where(
+#             n_samples < 1, 
+#             0,
+#             (batch_samples * idx_mask).sum(dim=-1, keepdim=True) / n_samples
+#         )
+#         mean_samples.append(batch_means)
+#         sample_counts.append(n_samples)
+#     mean_samples = torch.cat(mean_samples, dim=1) 
+#     sample_counts = torch.cat(sample_counts, dim=1)
+
+#     est_means, est_vars, n_batches_by_head, n_samples_by_head = update_means_variances_mixed(est_means, est_vars, mean_samples, n_batches_by_head, n_samples_by_head, sample_counts)
+
+#     if b % -10 == -1:
+#         sns.scatterplot(x=est_vars.flatten().cpu(), y=true_vars.flatten().cpu())
+#         sns.lineplot(x=[0,200], y=[0,200])
+#         plt.show()
+
+#         sns.scatterplot(x=est_means.flatten().cpu(), y=true_means.flatten().cpu())
+#         sns.lineplot(x=[-200,200], y=[-200,200])
+#         plt.show()
+
 class LinePlot:
     def __init__(self, stat_list, pref_start=100):
         self.stat_list = stat_list

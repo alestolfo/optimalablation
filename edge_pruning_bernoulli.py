@@ -52,9 +52,9 @@ except:
     subfolder = None
 
 if reg_lamb is None:
-    reg_lamb = 3e-4
+    reg_lamb = 1e-2
 
-node_reg=5e-4
+node_reg=0
 gpu_requeue = True
 # reset_optim = 1000
 
@@ -72,9 +72,9 @@ if not os.path.exists(folder):
 
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=0)
 pruning_cfg.lamb = reg_lamb
-pruning_cfg.batch_size = 1
-pruning_cfg.n_samples = 90
-pruning_cfg.initialize_params_probs(1)
+pruning_cfg.batch_size = 10
+pruning_cfg.n_samples = 10
+# pruning_cfg.initialize_params_probs(1)
 
 task_ds = IOIConfig(pruning_cfg.batch_size, device)
 
@@ -83,13 +83,27 @@ for param in model.parameters():
 
 # %%
 
+example_folder = "pruning_edges_auto/ioi_vertex_prior/0.0001-0.005-0.3"
+prune_mask, state_dict = retrieve_mask(example_folder, state_dict=True)
+
+tau = 0.0
+if os.path.exists(f"{example_folder}/fit_nodes_{tau}.pth"):
+    state_dict = torch.load(f"{example_folder}/fit_nodes_{tau}.pth")
+
+for k in prune_mask:
+    for ts in prune_mask[k]:
+        ts *= 0.5
+
+pruning_cfg.constant_prune_mask = prune_mask
+pruning_cfg.initialize_params_probs(1)
+
 # prune_retrain = True
 # prune_length = 200
 # retrain_length = 100
 
 # %%
 mask_sampler = EdgeMaskBernoulliSampler(pruning_cfg, node_reg=node_reg)
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
+edge_pruner = EdgePruner(model, pruning_cfg, [state_dict["modal_attention"], state_dict["modal_mlp"]], mask_sampler)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
@@ -101,10 +115,8 @@ modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.mo
 lp_count = pruning_cfg.load_snapshot(edge_pruner, sampling_optimizer, modal_optimizer, gpu_requeue, pretrained_folder=None)
 
 take_snapshot = partial(pruning_cfg.take_snapshot, edge_pruner, lp_count, sampling_optimizer, modal_optimizer)
-
-example_modes = torch.load("pruning_edges_auto/ioi_edges_unif/0.0001/fit_modes_0.0.pth")
-edge_pruner.load_state_dict({"modal_attention": example_modes['modal_attention'], "modal_mlp": example_modes['modal_mlp']}, strict=False)
 # %%
+
 # if prune_retrain and edge_pruner.log.t == 0:
 #     edge_pruner.log.mode = "prune"
 #     edge_pruner.log.cur_counter = 0
@@ -114,12 +126,18 @@ max_batches = 200
 is_losses = []
 prune_masks = []
 
-mask_sampler.sample_mask()
-mask_sampler.fix_mask = True
+# mask_sampler.sample_mask()
+# mask_sampler.fix_mask = True
 
+pruning_cfg.record_every = 200
+# mask_sampler.fix_mask = True
+mask_sampler.fix_mask_prop = 0.99
+
+j = 0
 # moving_avg_prob = 0
 
-for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
+# for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
+for no_batches in tqdm(range(10000)):
 
     plotting = no_batches % (-1 * pruning_cfg.record_every) == -1
     checkpointing = no_batches % (-1 * pruning_cfg.checkpoint_every * pruning_cfg.record_every) == -1
@@ -127,58 +145,122 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
     batch, last_token_pos = task_ds.next_batch(tokenizer)
     last_token_pos = last_token_pos.int()
 
-    # modal_optimizer.zero_grad()
-    # sampling_optimizer.zero_grad()
+    modal_optimizer.zero_grad()
+    sampling_optimizer.zero_grad()
 
+    # mask_sampler.sample_mask()
+    
     with torch.no_grad():
 
         # sample prune mask
         graph_suffix = f"-{no_batches}" if checkpointing else "" if plotting else None
         loss, mask_loss = edge_pruner(batch, last_token_pos, graph_suffix, separate_loss=True)
 
-        log_probs = mask_sampler.compute_log_probs(mask_sampler.sampled_mask)
-
+    log_probs = mask_sampler.compute_log_probs(mask_sampler.sampled_mask)
+    complexity_loss = mask_sampler.get_mask_loss()
         # moving_avg_window = min(no_batches, 99)
         # moving_avg_prob = (log_probs.mean() + moving_avg_window * moving_avg_prob) / (moving_avg_window+1)
 
-        is_loss = ((log_probs - log_probs.detach()).exp() * (loss))
-        # .mean()
+    is_loss = ((log_probs - log_probs.detach()).exp() * loss).mean()
 
-        is_losses.append(is_loss)
-        prune_masks.append(mask_sampler.sampled_mask)
+    total_loss = is_loss + complexity_loss[0].sum()
+    # # is_losses.append(is_loss)
+    # # prune_masks.append(mask_sampler.sampled_mask)
 
+    total_loss.backward()
+    # total_edges = {}
+    # diff_edges = {}
 
-    # is_loss.backward()
+    # for k in mask_sampler.sampled_mask:
+    #     total_edges[k] = []
+    #     diff_edges[k] = []
+    #     for ts in mask_sampler.sampled_mask[k]:
+    #         total_edges[k].append(ts.flatten(start_dim=1,end_dim=-1).sum(dim=1))
+    #         diff_edges[k].append(((ts.sum(dim=0) > 0) * (ts.sum(dim=0) < ts.shape[0])).sum())
+    #     total_edges[k] = torch.stack(total_edges[k], dim=0).sum(dim=0)
+    #     diff_edges[k] = torch.stack(diff_edges[k], dim=0).sum()
+    # print(total_edges)
+    # print(diff_edges)
 
-    # prev_alphas = mask_sampler.get_sampling_params()[:,0].detach().clone()
-    # prev_modes = edge_pruner.get_modes().detach().clone()
+    prev_alphas = mask_sampler.get_sampling_params()[:,0].detach().clone()
+    prev_modes = edge_pruner.get_modes().detach().clone()
 
-    # sampling_optimizer.step()
+    sampling_optimizer.step()
     # modal_optimizer.step()
 
-    # mask_sampler.fix_nans()
+    mask_sampler.fix_nans()
 
-    # with torch.no_grad():
-    #     step_sz = (mask_sampler.get_sampling_params()[:,0] - prev_alphas).abs()
-    #     step_sz = (step_sz - 1e-3).relu().sum() / (step_sz > 1e-3).sum()
-    #     mode_step_sz = (edge_pruner.get_modes().clone() - prev_modes).norm(dim=-1).mean()
-    #     lp_count.add_entry({
-    #         "step_size": step_sz.item(), 
-    #         "mode_step_size": mode_step_sz.item()
-    #     })
+    with torch.no_grad():
+        step_sz = (mask_sampler.get_sampling_params()[:,0] - prev_alphas).abs()
+        step_sz = (step_sz - 1e-3).relu().sum() / (step_sz > 1e-3).sum()
+        mode_step_sz = (edge_pruner.get_modes().clone() - prev_modes).norm(dim=-1).mean()
+        lp_count.add_entry({
+            "step_size": step_sz.item(), 
+            "mode_step_size": mode_step_sz.item()
+        })
 
-    # if plotting:
-    #     take_snapshot("")
+    if plotting:
+        take_snapshot("")
 
-    #     sns.histplot(x=log_probs.detach().cpu().flatten())
-    #     plt.savefig(f"{folder}/log_probs.png")
-    #     plt.close()
+        grad = mask_sampler.sampling_params['attn-attn'][9].grad.flatten()
+        print(grad[grad.nonzero()].shape)
+        sns.scatterplot(x=mask_sampler.sampled_mask['attn-attn'][9].float().mean(dim=0).flatten()[grad.nonzero()].flatten().cpu(),y=grad[grad.nonzero()].flatten().cpu())
+        plt.xlabel("Prob inclusion in batch")
+        plt.ylabel("Autograd")
+        plt.savefig(f"bernoulli/prior/prob_grad_strong_{j}.png")
+        plt.close()
+        sns.scatterplot(x=mask_sampler.sampling_params['attn-attn'][9].float().detach().flatten()[grad.nonzero()].flatten().cpu(),y=grad[grad.nonzero()].flatten().cpu())
+        plt.xlabel("Sampling parameter")
+        plt.ylabel("Autograd")
+        plt.savefig(f"bernoulli/prior/param_grad_strong_{j}.png")
 
-    #     if checkpointing:
-    #         take_snapshot(f"-{no_batches}")
+        sns.histplot(x=log_probs.detach().cpu().flatten())
+        plt.savefig(f"{folder}/log_probs.png")
+        plt.close()
+
+        j += 1
+
+        if checkpointing:
+            take_snapshot(f"-{no_batches}")
     
     # if reset_optim is not None and no_batches % (-1 * reset_optim) == -1:
     #     modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
+
+# %%
+
+my_ts = (
+    (mask_sampler.sampled_mask['attn-attn'][9].flatten(start_dim=1, end_dim=-1)) * loss.unsqueeze(-1) / (mask_sampler.sampling_params['attn-attn'][9].sigmoid().flatten()) 
+    - (1 - mask_sampler.sampled_mask['attn-attn'][9].flatten(start_dim=1,end_dim=-1)) * loss.unsqueeze(-1) / (1 - mask_sampler.sampling_params['attn-attn'][9].sigmoid().flatten())
+) * mask_sampler.fixed_mask['attn-attn'][9].flatten()
+# %%
+sigmoid_deriv = mask_sampler.sampling_params['attn-attn'][9].sigmoid() * (1-mask_sampler.sampling_params['attn-attn'][9].sigmoid())
+# %%
+
+sns.scatterplot(x=grad[grad.nonzero()].flatten().cpu(), y=(my_ts * sigmoid_deriv.flatten()).mean(dim=0)[grad.nonzero()].flatten().cpu().detach())
+# plt.xlim([-1, 1])
+# plt.ylim([-1,1])
+plt.xlabel("Autograd")
+plt.ylabel("Analytic gradient")
+plt.show()
+plt.savefig("bernoulli/prior/grad_analytic_comparison.png")
+sns.scatterplot(x=mask_sampler.sampled_mask['attn-attn'][9].float().mean(dim=0).flatten()[grad.nonzero()].flatten().cpu(), y=(my_ts * sigmoid_deriv.flatten()).mean(dim=0)[grad.nonzero()].flatten().cpu().detach())
+plt.xlabel("Prob of inclusion")
+plt.ylabel("Analytic gradient")
+plt.savefig("bernoulli/prior/prob_analytic.png")
+# %%
+total_edges = {}
+diff_edges = {}
+
+for k in mask_sampler.sampled_mask:
+    total_edges[k] = []
+    diff_edges[k] = []
+    for ts in mask_sampler.sampled_mask[k]:
+        total_edges[k].append(ts.flatten(start_dim=1,end_dim=-1).sum(dim=1))
+        diff_edges[k].append(((ts.sum(dim=0) > 0) * (ts.sum(dim=0) < ts.shape[0])).sum())
+    total_edges[k] = torch.stack(total_edges[k], dim=0).sum(dim=0)
+    diff_edges[k] = torch.stack(diff_edges[k], dim=0).sum()
+
+
 # %%
 is_losses = torch.stack(is_losses, dim=0)
 # %%

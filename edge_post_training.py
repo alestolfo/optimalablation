@@ -80,10 +80,10 @@ edge_pruner.add_patching_hooks()
 
 prune_mask, state_dict = retrieve_mask(folder, state_dict=True)
 
-if os.path.exists(f"{folder}/fit_nodes_{tau}.pth"):
-    state_dict = torch.load(f"{folder}/fit_nodes_{tau}.pth")
+# if os.path.exists(f"{folder}/fit_nodes_{tau}.pth"):
+#     state_dict = torch.load(f"{folder}/fit_nodes_{tau}.pth")
 
-edge_pruner.load_state_dict(state_dict, strict=False)
+# edge_pruner.load_state_dict(state_dict, strict=False)
 
 discrete_mask = discretize_mask(prune_mask, tau)
 cpm, edges, clipped_edges, _, _ = prune_dangling_edges(discrete_mask)

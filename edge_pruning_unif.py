@@ -51,7 +51,7 @@ except:
     subfolder = None
 
 if reg_lamb is None:
-    reg_lamb = 2e-4
+    reg_lamb = 1.8e-4
 
 node_reg=2e-3
 gpu_requeue = True
@@ -102,6 +102,7 @@ take_snapshot = partial(pruning_cfg.take_snapshot, edge_pruner, lp_count, sampli
 # if prune_retrain and edge_pruner.log.t == 0:
 #     edge_pruner.log.mode = "prune"
 #     edge_pruner.log.cur_counter = 0
+pruning_cfg.record_every = 50
 
 max_batches = 10000
 for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
@@ -161,6 +162,19 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     if plotting:
         take_snapshot("")
+        grad = mask_sampler.sampling_params['attn-attn'][9].grad.flatten()
+        print(grad[grad.nonzero()].shape)
+        sns.scatterplot(x=mask_sampler.sampled_mask['attn-attn'][9].float().mean(dim=0).flatten()[grad.nonzero()].flatten().cpu().detach(),y=grad[grad.nonzero()].flatten().cpu())
+        plt.xlabel("Prob inclusion in batch")
+        plt.ylabel("Autograd")
+        plt.savefig(f"bernoulli/prior/unif_prob_grad_{j}.png")
+        plt.close()
+
+        sns.scatterplot(x=mask_sampler.sampling_params['attn-attn'][9].float().detach().flatten()[grad.nonzero()].flatten().cpu().detach(),y=grad[grad.nonzero()].flatten().cpu())
+        plt.xlabel("Sampling parameter")
+        plt.ylabel("Autograd")
+        plt.savefig(f"bernoulli/prior/unif_param_grad_{j}.png")
+
         if checkpointing:
             take_snapshot(f"-{no_batches}")
     
