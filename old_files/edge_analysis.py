@@ -17,7 +17,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from MaskConfig import IOIConfig, GTConfig, cache_hook_all_tokens, pruning_edge_attention_hook_all_tokens, pruning_edge_mlp_hook_all_tokens, get_cache_hooks, sample_prune_mask
+from utils.MaskConfig import IOIConfig, GTConfig, cache_hook_all_tokens, pruning_edge_attention_hook_all_tokens, pruning_edge_mlp_hook_all_tokens, get_cache_hooks, sample_prune_mask
 from training_utils import load_model_data, LinePlot
 # %%
 
