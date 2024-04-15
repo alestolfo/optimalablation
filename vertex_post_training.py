@@ -6,7 +6,7 @@ import torch.optim
 import os
 from training_utils import load_model_data, LinePlot
 from circuit_utils import retrieve_mask, discretize_mask, get_ioi_nodes, nodes_to_vertex_mask
-from MaskSampler import ConstantMaskSampler
+from mask_samplers.MaskSampler import ConstantMaskSampler
 from VertexPruner import VertexPruner
 from MaskConfig import VertexInferenceConfig
 from task_datasets import IOIConfig, GTConfig

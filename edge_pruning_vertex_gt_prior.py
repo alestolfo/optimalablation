@@ -21,7 +21,7 @@ import pickle
 from EdgePruner import EdgePruner
 from VertexPruner import VertexPruner
 from circuit_utils import retrieve_mask, edge_prune_mask, discretize_mask
-from MaskSampler import MaskSampler, EdgeMaskJointSampler
+from mask_samplers.MaskSampler import MaskSampler, EdgeMaskJointSampler
 from MaskConfig import EdgeInferenceConfig
 from task_datasets import IOIConfig, GTConfig
 from training_utils import load_model_data, LinePlot

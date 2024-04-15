@@ -18,7 +18,7 @@ import argparse
 import matplotlib.pyplot as plt
 import pickle
 from training_utils import load_model_data, LinePlot
-from MaskSampler import MaskSampler
+from mask_samplers.MaskSampler import MaskSampler
 from VertexPruner import VertexPruner
 from MaskConfig import VertexInferenceConfig
 from task_datasets import IOIConfig, GTConfig

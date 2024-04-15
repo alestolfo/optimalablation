@@ -8,7 +8,7 @@ import glob
 import seaborn as sns
 import pickle
 from VertexPruner import VertexPruner
-from MaskSampler import ConstantMaskSampler
+from mask_samplers.MaskSampler import ConstantMaskSampler
 from MaskConfig import VertexInferenceConfig
 from task_datasets import IOIConfig, GTConfig
 from circuit_utils import discretize_mask, prune_dangling_edges, retrieve_mask, mask_to_nodes, nodes_to_mask

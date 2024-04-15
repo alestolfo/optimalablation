@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 from circuit_utils import retrieve_mask
 import pickle
 from EdgePruner import EdgePruner
-from MaskSampler import EdgeMaskBernoulliSampler
+from mask_samplers.MaskSampler import EdgeMaskBernoulliSampler
 from MaskConfig import EdgeInferenceConfig
 from task_datasets import IOIConfig, GTConfig
 from training_utils import load_model_data, LinePlot

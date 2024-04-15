@@ -4,7 +4,7 @@ from sys import argv
 from functools import partial
 import torch.optim
 from VertexPruner import VertexPruner
-from MaskSampler import ConstantMaskSampler
+from mask_samplers.MaskSampler import ConstantMaskSampler
 from MaskConfig import VertexInferenceConfig
 from task_datasets import IOIConfig, GTConfig
 from training_utils import load_model_data, LinePlot

@@ -19,7 +19,7 @@ import pickle
 from MaskConfig import EdgeInferenceConfig
 from task_datasets import IOIConfig, GTConfig
 from EdgePruner import EdgePruner
-from MaskSampler import EdgeMaskIterativeSampler
+from mask_samplers.MaskSampler import EdgeMaskIterativeSampler
 from training_utils import load_model_data, LinePlot
 
 # %%

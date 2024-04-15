@@ -19,7 +19,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
 from EdgePruner import EdgePruner
-from MaskSampler import EdgeMaskUnifSampler
+from mask_samplers.MaskSampler import EdgeMaskUnifSampler
 from MaskConfig import EdgeInferenceConfig
 from task_datasets import IOIConfig, GTConfig
 from training_utils import load_model_data, LinePlot
@@ -60,9 +60,9 @@ gpu_requeue = True
 print(reg_lamb)
 
 if subfolder is not None:
-    folder=f"pruning_edges_auto/ioi_edges_unif/{subfolder}"
+    folder=f"pruning_edges_auto/ioi_edges_unifsd/{subfolder}"
 else:
-    folder=f"pruning_edges_auto/ioi_edges_unif/{reg_lamb}"
+    folder=f"pruning_edges_auto/ioi_edges_unifsd/{reg_lamb}"
 
 pretrained_folder = None
 # f"pruning_edges_auto/ioi/300.0"

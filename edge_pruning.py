@@ -19,7 +19,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
 from EdgePruner import EdgePruner
-from MaskSampler import EdgeMaskJointSampler
+from mask_samplers.MaskSampler import EdgeMaskJointSampler
 from MaskConfig import EdgeInferenceConfig
 from task_datasets import IOIConfig, GTConfig
 from training_utils import load_model_data, LinePlot

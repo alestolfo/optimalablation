@@ -6,7 +6,7 @@ import torch.optim
 import os
 from training_utils import load_model_data, LinePlot
 from circuit_utils import retrieve_mask, discretize_mask, get_ioi_nodes, nodes_to_vertex_mask, nodes_to_mask, prune_dangling_edges
-from MaskSampler import ConstantMaskSampler
+from mask_samplers.MaskSampler import ConstantMaskSampler
 from VertexPruner import VertexPruner
 from EdgePruner import EdgePruner
 from MaskConfig import EdgeInferenceConfig

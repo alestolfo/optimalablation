@@ -7,7 +7,7 @@ import torch.optim
 import seaborn as sns
 import pickle
 from EdgePruner import EdgePruner
-from MaskSampler import ConstantMaskSampler, EdgeMaskUnifSampler
+from mask_samplers.MaskSampler import ConstantMaskSampler, EdgeMaskUnifSampler
 from MaskConfig import EdgeInferenceConfig
 from task_datasets import IOIConfig, GTConfig
 from circuit_utils import discretize_mask, prune_dangling_edges, retrieve_mask, mask_to_edges, mask_to_nodes
