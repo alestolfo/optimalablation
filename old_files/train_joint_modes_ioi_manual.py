@@ -16,7 +16,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
 from training_utils import load_model_data, LinePlot
-from MaskConfig import IOIConfig
+from utils.MaskConfig import IOIConfig
 
 # %%
 
