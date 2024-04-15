@@ -260,18 +260,22 @@ class EdgeMaskBernoulliSampler(EdgeMaskUnifSampler):
     def __init__(self, pruning_cfg, node_reg=0):
         super().__init__(pruning_cfg, node_reg)
 
-        self.sampling_function = self.sample_bernoulli    
+        self.sampling_function = self.sample_bernoulli
+        self.fix_mask_prop = None    
+        self.fixed_mask = None
     
     # maximum scale = 2
     # more scale = more Unif
     def sample_bernoulli(self, unif, sampling_params, scale=1):
-        probs = sampling_params[...,0].sigmoid()
-        return (unif < probs.detach()) * 1
+        with torch.no_grad():
+            probs = sampling_params[...,0].sigmoid()
+            return (unif < probs.detach()) * 1
     
     # use sample estimate of mask loss instead of exact expectation to denoise gradient signal
-    def sample_mask(self, constant=100, bottom_quantile=.75):
+    def sample_mask(self, constant=1, bottom_quantile=.75):
         bsz = self.pruning_cfg.n_samples * self.pruning_cfg.batch_size
         big_bsz = bsz * constant
+        
         cand_mask = {}
         for k in self.sampling_params:
             cand_mask[k] = []
@@ -282,48 +286,94 @@ class EdgeMaskBernoulliSampler(EdgeMaskUnifSampler):
                 unif = torch.rand((big_bsz, *ts.shape[:-1])).to(self.pruning_cfg.device)
                 cand_mask[k].append(self.sampling_function(unif, ts))
 
-        filtered_mask = prune_dangling_edges(cand_mask, bsz=big_bsz)
-        
-        for k in cand_mask:
-            for i, ts in enumerate(cand_mask[k]):
-                cand_mask[k][i] = ts * filtered_mask[k][i].detach()
-        
-        with torch.no_grad():
-            log_probs = self.compute_log_probs(cand_mask)
+        if self.fix_mask_prop is not None:
+            self.fixed_mask = {}
+            # self.sampling_probs = {}
+            for k in self.sampling_params:
+                self.fixed_mask[k] = []
+                # self.sampling_probs[k] = []
+                for i,ts in enumerate(self.sampling_params[k]):
+                    unif = torch.rand((1, *ts.shape[:-1])).to(self.pruning_cfg.device)
+                    fixed_mask_bernoulli = self.sampling_function(unif, ts)
 
-        cutoff = log_probs.quantile(bottom_quantile + (1-bottom_quantile-2/constant) * torch.rand(1).item())
-        vals, indices = torch.topk(-1 * (log_probs > cutoff) * log_probs, bsz)
-        # sns.histplot(vals.cpu())
+                    mixture_unif = torch.rand(ts.shape[:-1]).to(self.pruning_cfg.device)
 
-        mask_loss = torch.zeros(bsz,).to(self.pruning_cfg.device)
-        prune_mask = {}
-        for k in cand_mask:
-            prune_mask[k] = []
-            for ts in cand_mask[k]:
-                # unif = torch.rand((bsz, *self.sampling_params[k][i].shape[:-1])).to(self.pruning_cfg.device)
-                # prune_mask[k].append(self.sampling_function(unif, self.sampling_params[k][i]))
-                ts = ts[indices]
-                prune_mask[k].append(ts)     
-                mask_loss = mask_loss + ts.flatten(start_dim=1,end_dim=-1).sum(dim=1)   
-        self.sampled_mask = prune_mask
-        self.mask_loss = mask_loss
+                    cand_mask[k][i] = (
+                        (mixture_unif <= self.fix_mask_prop) * fixed_mask_bernoulli
+                        + (mixture_unif > self.fix_mask_prop) * cand_mask[k][i]
+                    )
+
+                    # self.sampling_probs[k].append(
+                    #     (mixture_unif <= self.fix_mask_prop).unsqueeze(-1) * self.sampling_params[k][i].detach()
+                    #     + (mixture_unif > self.fix_mask_prop).unsqueeze(-1) * self.sampling_params[k][i]
+                    # )
+
+                    self.fixed_mask[k].append((mixture_unif <= self.fix_mask_prop) * 1)
+        
+        self.sampled_mask = cand_mask
+        # filtered_mask = prune_dangling_edges(cand_mask, bsz=big_bsz)
+        
+        # for k in cand_mask:
+        #     for i, ts in enumerate(cand_mask[k]):
+        #         cand_mask[k][i] = ts * filtered_mask[k][i].detach()
+        
+        # with torch.no_grad():
+        #     log_probs = self.compute_log_probs(cand_mask)
+
+        # cutoff = log_probs.quantile(bottom_quantile + (1-bottom_quantile-2/constant) * torch.rand(1).item())
+        # vals, indices = torch.topk(-1 * (log_probs > cutoff) * log_probs, bsz)
+        # # sns.histplot(vals.cpu())
+
+        # mask_loss = torch.zeros(bsz,).to(self.pruning_cfg.device)
+        # prune_mask = {}
+        # for k in cand_mask:
+        #     prune_mask[k] = []
+        #     for ts in cand_mask[k]:
+        #         # unif = torch.rand((bsz, *self.sampling_params[k][i].shape[:-1])).to(self.pruning_cfg.device)
+        #         # prune_mask[k].append(self.sampling_function(unif, self.sampling_params[k][i]))
+        #         ts = ts[indices]
+        #         prune_mask[k].append(ts)     
+        #         mask_loss = mask_loss + ts.flatten(start_dim=1,end_dim=-1).sum(dim=1)   
+
+        # self.sampled_mask = prune_mask
+        # self.mask_loss = mask_loss
 
     def compute_log_probs(self, prune_mask):
+        if self.fix_mask_prop is None:
+            sampling_probs = self.sampling_params
+        else:
+            # don't perform gradient updates on fixed mask items
+            sampling_probs = {}
+            for k in self.sampling_params:
+                sampling_probs[k] = []
+                for i,ts in enumerate(self.sampling_params[k]):
+                    sampling_probs[k].append(
+                        self.fixed_mask[k][i].unsqueeze(-1) * ts.detach() 
+                        + (1-self.fixed_mask[k][i].unsqueeze(-1)) * ts
+                    )
+        # sampling_probs = self.sampling_params
+
         log_probs = []
         for k in prune_mask:
             for i, ts in enumerate(prune_mask[k]):
-                log_prob = self.sampling_params[k][i].squeeze(-1).sigmoid().log() * ts 
-                + (1-self.sampling_params[k][i].squeeze(-1).sigmoid()).log() * (1-ts)
+                log_prob = (
+                    sampling_probs[k][i].squeeze(-1).sigmoid().log() * ts 
+                    + (1-sampling_probs[k][i].squeeze(-1).sigmoid()).log() * (1-ts)
+                )
                 log_probs.append(log_prob.flatten(start_dim=1,end_dim=-1).sum(dim=1))
         
         return torch.stack(log_probs, dim=1).sum(dim=1)
 
     def get_mask_loss(self):
-        all_sampling_params = self.get_sampling_params()
+        all_sampling_params = torch.cat([
+            (ts * (1-self.fixed_mask[k][i]).unsqueeze(-1)).flatten(start_dim=0,end_dim=-2)
+            for k in self.sampling_params 
+            for i, ts in enumerate(self.sampling_params[k])
+        ], dim=0)
 
         # alphas already logged
         complexity_loss = self.complexity_loss(all_sampling_params)
-        mask_loss = self.pruning_cfg.lamb * self.mask_loss
+        # mask_loss = self.pruning_cfg.lamb * self.mask_loss
 
         with torch.no_grad():
             print("Complexity:", complexity_loss.sum().item(), "out of", complexity_loss.nelement())
@@ -331,7 +381,7 @@ class EdgeMaskBernoulliSampler(EdgeMaskUnifSampler):
         mask_details = {                
             "complexity_loss": complexity_loss.mean().item() if self.complexity_mean else complexity_loss.sum().item(),
         }
-        return mask_loss, mask_details
+        return complexity_loss, mask_details
         
     def forward(self):
         if not self.fix_mask:
@@ -443,34 +493,35 @@ class AttributionPatchingMaskSampler(torch.nn.Module):
 
         n_layers = pruning_cfg.n_layers
         n_heads = pruning_cfg.n_heads
-        device = pruning_cfg.device
 
-        bsz = pruning_cfg.batch_size
+        self.device = pruning_cfg.device
+        self.bsz = pruning_cfg.batch_size
 
         self.sampling_params = torch.nn.ParameterDict({
             "attn": torch.nn.ParameterList([
-                torch.nn.Parameter(torch.ones((n_heads,)).to(device)) 
+                torch.nn.Parameter(torch.ones((n_heads,)).to(self.device)) 
                 for _ in range(n_layers)
             ]),
             "mlp": torch.nn.ParameterList([
-                torch.nn.Parameter(torch.ones((1,)).to(device)) 
+                torch.nn.Parameter(torch.ones(()).to(self.device)) 
                 for _ in range(n_layers)
             ])
         })
 
+    # even though the same mask is taken every time, we need to recompute it to take derivatives
+    def forward(self):
         self.sampled_mask = {}
         for k in self.sampling_params:
             self.sampled_mask[k] = []
-            for ts in enumerate(self.sampling_params[k]):
-                self.sampled_mask[k].append(torch.ones((bsz, *ts.shape)).to(device) * ts)
+            for ts in self.sampling_params[k]:
+                self.sampled_mask[k].append(torch.ones((self.bsz, *ts.shape)).to(self.device) * ts)
 
-    def forward(self):
         return 0, {}
 
     def record_state(self, j):
         pass
 
-# for direct mean ablation
+# for direct mean ablation. Can't take derivatives
 class SingleComponentMaskSampler(torch.nn.Module):
     def __init__(self, pruning_cfg):
         super().__init__()
@@ -538,13 +589,13 @@ class MultiComponentMaskSampler(torch.nn.Module):
                 for i in range(self.n_layers)
             ]),
             "mlp": torch.nn.ParameterList([
-                torch.nn.Parameter(torch.zeros((1,)).to(self.device)) 
+                torch.nn.Parameter(torch.zeros(()).to(self.device)) 
                 for i in range(self.n_layers)
             ])
         })
 
     def forward(self):
-        bsz = self.pruning_cfg.bsz * self.pruning_cfg.n_samples
+        bsz = self.pruning_cfg.batch_size * self.pruning_cfg.n_samples
 
         total_heads = self.n_layers * self.n_heads
         sampled_heads = math.ceil(self.prop_sample * total_heads)
@@ -564,7 +615,7 @@ class MultiComponentMaskSampler(torch.nn.Module):
                 for i in range(self.n_layers)
             ],
             "mlp": [
-                torch.ones((bsz,1)).to(self.device) 
+                torch.ones((bsz,)).to(self.device) 
                 for i in range(self.n_layers)
             ]
         }
