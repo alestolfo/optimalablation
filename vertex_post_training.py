@@ -4,13 +4,13 @@ from tqdm import tqdm
 from sys import argv
 import torch.optim
 import os
-from training_utils import load_model_data, LinePlot
-from circuit_utils import retrieve_mask, discretize_mask, get_ioi_nodes, nodes_to_vertex_mask
+import argparse
 from mask_samplers.MaskSampler import ConstantMaskSampler
-from VertexPruner import VertexPruner
+from pruners.VertexPruner import VertexPruner
 from utils.MaskConfig import VertexInferenceConfig
-from task_datasets import IOIConfig, GTConfig
-
+from utils.training_utils import load_model_data, LinePlot, load_args
+from utils.circuit_utils import retrieve_mask, discretize_mask, get_ioi_nodes, nodes_to_vertex_mask
+from utils.task_datasets import get_task_ds
 # %%
 
 model_name = "gpt2-small"
@@ -23,27 +23,15 @@ n_heads = model.cfg.n_heads
 
 # %%
 # settings
-try:
-    reg_lamb = float(argv[1])
-    tau = float(argv[2])
-except:
-    reg_lamb=1e-3
-    tau = -1
-
-manual=False
-
-if manual:
-    folder=f"pruning_vertices_auto/ioi/manual"
-    tau = 0.5
-else:
-    folder=f"pruning_vertices_auto/ioi_with_mlp/{reg_lamb}"
+args = load_args("pruning_vertices_auto", 1e-3)
+folder, reg_lamb, dataset, tau = args["folder"], args["lamb"], args["dataset"], args["tau"]
 
 batch_size=75
 pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, init_param=0, batch_size=batch_size)
 pruning_cfg.lamb = reg_lamb
 pruning_cfg.n_samples = 1
 
-task_ds = IOIConfig(batch_size, device)
+task_ds = get_task_ds(dataset, batch_size, device)
 
 for param in model.parameters():
     param.requires_grad = False
@@ -53,10 +41,9 @@ mask_sampler = ConstantMaskSampler()
 vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
 vertex_pruner.add_patching_hooks()
 
-if manual:
+if folder.split("/")[-1] == "manual":
     ioi_nodes = get_ioi_nodes()
-    prune_mask = nodes_to_vertex_mask(ioi_nodes)
-    mask_sampler.set_mask(prune_mask)
+    discrete_mask = nodes_to_vertex_mask(ioi_nodes)
 else:
     prune_mask, state_dict = retrieve_mask(folder, state_dict=True)
     if os.path.exists(f"{folder}/fit_nodes_{tau}.pth"):
@@ -64,7 +51,7 @@ else:
         print(state_dict)
     vertex_pruner.load_state_dict(state_dict, strict=False)
     discrete_mask = discretize_mask(prune_mask, tau)
-    mask_sampler.set_mask(discrete_mask)
+mask_sampler.set_mask(discrete_mask)
 
 modal_optimizer = torch.optim.AdamW([vertex_pruner.modal_attention, vertex_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
 

@@ -3,53 +3,14 @@
 import os
 from sys import argv
 from tqdm import tqdm
-import argparse
 import torch.optim
-from EdgePruner import EdgePruner
+from pruners.EdgePruner import EdgePruner
 from mask_samplers.MaskSampler import ConstantMaskSampler
 from utils.MaskConfig import EdgeInferenceConfig
-from task_datasets import IOIConfig, GTConfig
-from circuit_utils import discretize_mask, prune_dangling_edges, retrieve_mask
-from training_utils import load_model_data, LinePlot
+from utils.task_datasets import get_task_ds
+from utils.circuit_utils import discretize_mask, prune_dangling_edges, retrieve_mask, edges_to_mask
+from utils.training_utils import load_model_data, LinePlot, load_args    
 
-# %%
-
-try:
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-l', '--lamb',
-                        help='regularization constant')
-    parser.add_argument('-s', '--subfolder',
-                        help='where to save stuff')
-    parser.add_argument('-t', '--tau',
-                        help='threshold')
-    args = parser.parse_args()
-    reg_lamb = args.lamb
-    subfolder = args.subfolder
-    tau = float(args.tau)
-except:
-    reg_lamb = 2e-4
-    subfolder = None
-    tau = -1
-
-try:
-    reg_lamb = float(reg_lamb)
-except:
-    pass
-
-if reg_lamb is None:
-    reg_lamb = 2e-4
-
-gpu_requeue = True
-# reset_optim = 1000
-if subfolder is not None:
-    folder=f"pruning_edges_auto/{subfolder}/{reg_lamb}"
-else:
-    folder=f"pruning_edges_auto/ioi_edges_unif/{reg_lamb}"
-
-# %%
-    
-
-print(folder)
 # %%
 # load model
 model_name = "gpt2-small"
@@ -60,14 +21,20 @@ model.cfg.use_split_qkv_input = True
 model.cfg.use_hook_mlp_in = True
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
+
 # %%
+args = load_args("pruning_edges_auto", 2e-4)
+folder, reg_lamb, dataset, tau, run_name = args["folder"], args["lamb"], args["dataset"], args["tau"], args["name"]
+
+gpu_requeue = True
+# reset_optim = 1000
 
 batch_size = 75
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
 # pruning_cfg.lamb = reg_lamb
 pruning_cfg.n_samples = 1
 
-task_ds = IOIConfig(batch_size, device)
+task_ds = get_task_ds(dataset, batch_size, device)
 
 for param in model.parameters():
     param.requires_grad = False
@@ -78,16 +45,22 @@ edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler,
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
-prune_mask, state_dict = retrieve_mask(folder, state_dict=True)
+if run_name == "acdc" or run_name == "eap":
+    acdc_edges_file=f"{folder}/edges_{reg_lamb}.pth"
+    edge_list = torch.load(acdc_edges_file)
+    prune_mask = edges_to_mask(edge_list)
+    cpm, c_e, clipped_e, _, _ = prune_dangling_edges(prune_mask)
+    print(c_e)
+    print(clipped_e)
+else:
+    prune_mask, state_dict = retrieve_mask(folder)
+    discrete_mask = discretize_mask(prune_mask, tau)
+    cpm, edges, clipped_edges, _, _ = prune_dangling_edges(discrete_mask)
+    mask_sampler.set_mask(cpm)
 
-# if os.path.exists(f"{folder}/fit_nodes_{tau}.pth"):
-#     state_dict = torch.load(f"{folder}/fit_nodes_{tau}.pth")
-
-# edge_pruner.load_state_dict(state_dict, strict=False)
-
-discrete_mask = discretize_mask(prune_mask, tau)
-cpm, edges, clipped_edges, _, _ = prune_dangling_edges(discrete_mask)
-mask_sampler.set_mask(cpm)
+if os.path.exists(f"{folder}/fit_nodes_{tau}.pth"):
+    state_dict = torch.load(f"{folder}/fit_nodes_{tau}.pth")
+    edge_pruner.load_state_dict(state_dict, strict=False)
 
 modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
 

@@ -2,15 +2,73 @@
 
 import torch
 from transformer_lens import HookedTransformer
-from data import retrieve_owt_data
 from itertools import cycle
 import torch.optim
 from fancy_einsum import einsum
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import os
+import argparse
+from utils.data import retrieve_owt_data
+
 
 # %%
+
+default_args = {
+    "name": None,
+    "lamb": 1e-3,
+    "dataset": "ioi",
+    "subfolder": None,
+    "priorscale": None,
+    "priorlamb": None
+}
+
+def load_args(run_type, default_lamb, defaults={}):
+    my_args = {**default_args, **defaults, "lamb": default_lamb}
+    try:
+        parser = argparse.ArgumentParser()
+        parser.add_argument('-l', '--lamb',
+                            help='regularization constant')
+        parser.add_argument('-d', '--dataset',
+                            help='ioi or gt')
+        parser.add_argument('-s', '--subfolder',
+                            help='where to load/save stuff')
+        parser.add_argument('-t', '--priorscale',
+                            help='prior strength')
+        parser.add_argument('-p', '--priorlamb',
+                            help='which vertex lambda')
+        parser.add_argument('-n', '--name',
+                            help='run name, e.g. edges or vertex prior')
+        parser.add_argument('-t', '--tau',
+                            help='threshold to use for post training')
+
+        args = parser.parse_args()
+
+        for k in args:
+            my_args[k] = args[k]
+            if k in {"lamb", "priorscale", "priorlamb", "tau"}:
+                my_args[k] = float(my_args[k])
+    except:
+        pass
+
+    print(my_args["lamb"])
+    parent = "results"
+
+    run_folder = my_args["dataset"] if my_args["name"] is None else f"{my_args['dataset']}_{my_args['name']}"
+    if my_args["subfolder"] is not None:
+        folder=f"{parent}/{run_type}/{run_folder}/{my_args['subfolder']}"
+    elif my_args["priorlamb"] is not None:
+        folder=f"{parent}/{run_type}/{run_folder}/{my_args['lamb']}-{my_args['priorlamb']}-{my_args['priorscale']}"
+    else:
+        folder=f"{parent}/{run_type}/{run_folder}/{my_args['lamb']}"
+
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+    
+    my_args["folder"] = folder
+    return my_args
+
 def load_model_data(model_name, batch_size=8, ctx_length=25, repeats=True, ds_name=False, device="cuda:0"):
     # device="cpu"
     device = torch.device(device if torch.cuda.is_available() else "cpu")

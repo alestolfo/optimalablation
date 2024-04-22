@@ -9,7 +9,7 @@ import time
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from training_utils import LinePlot
+from utils.training_utils import LinePlot
 
 kl_loss = torch.nn.KLDivLoss(reduction="none")
 

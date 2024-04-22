@@ -16,11 +16,11 @@ from itertools import cycle
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from training_utils import load_model_data, LinePlot
 import json
 from pathlib import Path
-from greater_than.utils import get_valid_years
-from greater_than.data import YearDataset
+from utils.training_utils import load_model_data, LinePlot
+from utils.datasets.greater_than.utils import get_valid_years
+from utils.datasets.greater_than.data import YearDataset
 
 class OWTConfig():
     def __init__(self, owt_iter, device):
@@ -28,10 +28,10 @@ class OWTConfig():
         self.device = device
     
     def init_modes(self):
-        with open("oca/owt/means_attention.pkl", "rb") as f:
+        with open("results/oca/owt/means_attention.pkl", "rb") as f:
             # n_layers x n_heads x d_model
             init_modes_attention = pickle.load(f)
-        with open("oca/owt/means_mlp.pkl", "rb") as f:
+        with open("results/oca/owt/means_mlp.pkl", "rb") as f:
             # n_layers x n_heads x d_model
             init_modes_mlp = pickle.load(f)
         return init_modes_attention[:,-1], init_modes_mlp[:,-1]
@@ -61,10 +61,10 @@ class IOIConfig():
         return self.ds_test
     
     def init_modes(self):
-        with open("oca/ioi/means_attention.pkl", "rb") as f:
+        with open("results/oca/ioi/means_attention.pkl", "rb") as f:
             # n_layers x n_heads x d_model
             init_modes_attention = pickle.load(f)
-        with open("oca/ioi/means_mlp.pkl", "rb") as f:
+        with open("results/oca/ioi/means_mlp.pkl", "rb") as f:
             # n_layers x n_heads x d_model
             init_modes_mlp = pickle.load(f)
         return init_modes_attention[:,-1], init_modes_mlp[:,-1]
@@ -146,3 +146,13 @@ class ColorConfig():
         batch = tokenizer(["Q: " + next(self.ds_iter)['input'] + " A: It's a" for _ in range(self.batch_size)], padding=True, return_tensors='pt')['input_ids'].to(self.device)
         last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(self.device)).argmax(dim=-1)
         return batch, last_token_pos
+
+
+def get_task_ds(dataset, bsz, device):
+    if dataset == "ioi":
+        task_ds = IOIConfig(bsz, device)
+    elif dataset == "gt":
+        task_ds = GTConfig(bsz, device)
+    else:
+        raise Exception(f"Dataset {dataset} not defined")
+    return task_ds

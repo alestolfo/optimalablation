@@ -17,13 +17,13 @@ import argparse
 from itertools import cycle
 import seaborn as sns
 import matplotlib.pyplot as plt
-from circuit_utils import retrieve_mask
+from utils.circuit_utils import retrieve_mask
 import pickle
-from EdgePruner import EdgePruner
-from mask_samplers.MaskSampler import EdgeMaskBernoulliSampler
+from pruners.EdgePruner import EdgePruner
+from mask_samplers.EdgeMaskSampler import EdgeMaskBernoulliSampler
 from utils.MaskConfig import EdgeInferenceConfig
-from task_datasets import IOIConfig, GTConfig
-from training_utils import load_model_data, LinePlot
+from utils.task_datasets import IOIConfig, GTConfig
+from utils.training_utils import load_model_data, LinePlot, load_args
 
 # %%
 # load model
@@ -38,32 +38,11 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
 # %%
-try:
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-l', '--lamb',
-                        help='regularization constant')
-    parser.add_argument('-s', '--subfolder',
-                        help='where to save stuff')
-    args = parser.parse_args()
-    reg_lamb = float(args.lamb)
-    subfolder = args.subfolder
-except:
-    reg_lamb = None
-    subfolder = None
-
-if reg_lamb is None:
-    reg_lamb = 1e-2
-
+args = load_args("pruning_edges_auto", 1.1e-2, {"name": "edges_IS"})
+folder, reg_lamb, dataset = args["folder"], args["lamb"], args["dataset"]
 node_reg=0
 gpu_requeue = True
 # reset_optim = 1000
-
-print(reg_lamb)
-
-if subfolder is not None:
-    folder=f"pruning_edges_auto/ioi_edges_IS/{subfolder}"
-else:
-    folder=f"pruning_edges_auto/ioi_edges_IS/{reg_lamb}"
 
 pretrained_folder = None
 # f"pruning_edges_auto/ioi/300.0"

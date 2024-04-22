@@ -17,8 +17,8 @@ from itertools import cycle
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from circuit_utils import edge_prune_mask, vertex_prune_mask, retrieve_mask, discretize_mask, prune_dangling_edges, get_ioi_nodes, mask_to_edges, nodes_to_mask, nodes_to_vertex_mask, mask_to_nodes, edges_to_mask, get_ioi_edge_mask
-from training_utils import LinePlot
+from utils.circuit_utils import edge_prune_mask, vertex_prune_mask, retrieve_mask, discretize_mask, prune_dangling_edges, get_ioi_nodes, mask_to_edges, nodes_to_mask, nodes_to_vertex_mask, mask_to_nodes, edges_to_mask, get_ioi_edge_mask
+from utils.training_utils import LinePlot
 
 # %%
 

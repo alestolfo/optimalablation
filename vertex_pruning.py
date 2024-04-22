@@ -17,12 +17,11 @@ import seaborn as sns
 import argparse
 import matplotlib.pyplot as plt
 import pickle
-from training_utils import load_model_data, LinePlot
+from utils.training_utils import load_args, load_model_data, LinePlot
 from mask_samplers.MaskSampler import MaskSampler
-from VertexPruner import VertexPruner
+from pruners.VertexPruner import VertexPruner
 from utils.MaskConfig import VertexInferenceConfig
-from task_datasets import IOIConfig, GTConfig
-
+from utils.task_datasets import get_task_ds
 # %%
 
 model_name = "gpt2-small"
@@ -34,41 +33,18 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
 # %%
-try:
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-l', '--lamb',
-                        help='regularization constant')
-    parser.add_argument('-s', '--subfolder',
-                        help='where to save stuff')
-    args = parser.parse_args()
-    reg_lamb = float(args.lamb)
-    subfolder = args.subfolder
-except:
-    reg_lamb = None
-    subfolder = None
-
-if reg_lamb is None:
-    reg_lamb = 3e-3
-
+args = load_args("pruning_vertices_auto", 1e-3)
+folder, reg_lamb, dataset = args["folder"], args["lamb"], args["dataset"]
 gpu_requeue = True
-
-print(reg_lamb)
-
-if subfolder is not None:
-    folder=f"pruning_vertices_auto/gt/{subfolder}"
-else:
-    folder=f"pruning_vertices_auto/gt/{reg_lamb}"
 
 pretrained_folder = None
 # f"pruning_edges_auto/ioi/300.0"
-if not os.path.exists(folder):
-    os.makedirs(folder)
 
 pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, init_param=1)
 pruning_cfg.lamb = reg_lamb
 pruning_cfg.lr_modes = 5e-3
 
-task_ds = GTConfig(pruning_cfg.batch_size, device)
+task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device)
 
 for param in model.parameters():
     param.requires_grad = False

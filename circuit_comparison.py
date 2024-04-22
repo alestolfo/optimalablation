@@ -26,25 +26,17 @@ from training_utils import LinePlot
 
 # %%
 
+task_name = "gt"
 folders=[
-    # ({
-    #     "vertex": "pruning_vertices_auto/ioi_with_mlp", 
-    #     "edges HC": "pruning_edges_auto/ioi_edges", 
-    #     "edges HC (vertex prior)": "pruning_edges_auto/ioi_vertex_prior", 
-    #     "edges uniform": "pruning_edges_auto/ioi_edges_unif", 
-    #     "acdc": "acdc_ioi_runs",
-    #     "eap": "eap_ioi_runs"
-    # }),
     ({
-        "vertex": "pruning_vertices_auto/gt", 
-        "edges HC": "pruning_edges_auto/gt_edges", 
-        "edges HC (vertex prior)": "pruning_edges_auto/gt_vertex_prior", 
-        "edges uniform": "pruning_edges_auto/gt_edges_unif", 
-        "acdc": "acdc_gt_runs",
-        "eap": "eap_gt_runs"
+        "vertex": f"results/pruning_vertices_auto/{task_name}", 
+        "edges HC": f"results/pruning_edges_auto/{task_name}_edges", 
+        "edges HC (vertex prior)": f"results/pruning_edges_auto/{task_name}_vertex_prior", 
+        "edges uniform": f"results/pruning_edges_auto/{task_name}_edges_unif", 
+        "acdc": f"results_baseline/acdc_{task_name}_runs",
+        "eap": f"results_baseline/eap_{task_name}_runs"
     }),
 ]
-task_name = "gt"
 out_folder = f"similarities/{task_name}"
 
 # %%

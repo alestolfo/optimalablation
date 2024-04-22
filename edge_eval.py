@@ -10,12 +10,12 @@ from functools import partial
 import torch.optim
 import glob
 import pickle
-from EdgePruner import EdgePruner
+from pruners.EdgePruner import EdgePruner
 from mask_samplers.MaskSampler import ConstantMaskSampler
 from utils.MaskConfig import EdgeInferenceConfig
-from task_datasets import IOIConfig, GTConfig
-from circuit_utils import discretize_mask, prune_dangling_edges, retrieve_mask
-from training_utils import load_model_data, LinePlot
+from utils.task_datasets import get_task_ds
+from utils.circuit_utils import discretize_mask, prune_dangling_edges, retrieve_mask
+from utils.training_utils import load_model_data, LinePlot
 
 # %%
 # load model
@@ -34,7 +34,8 @@ try:
 except:
     reg_lamb=1e-4
 
-folder=f"pruning_edges_auto/gt_edges_unif"
+dataset = "ioi"
+folder=f"pruning_edges_auto/{dataset}_edges_unif"
 load_edges = False
 
 batch_size=50
@@ -42,7 +43,7 @@ pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_si
 pruning_cfg.lamb = reg_lamb
 pruning_cfg.n_samples = 1
 
-task_ds = GTConfig(batch_size, device)
+task_ds = get_task_ds(dataset, batch_size, device)
 ds_test = task_ds.get_test_set(tokenizer)
 
 for param in model.parameters():

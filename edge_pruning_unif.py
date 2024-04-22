@@ -18,12 +18,11 @@ from itertools import cycle
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from EdgePruner import EdgePruner
-from mask_samplers.MaskSampler import EdgeMaskJointSampler
+from mask_samplers.EdgeMaskSampler import EdgeMaskUnifSampler
 from utils.MaskConfig import EdgeInferenceConfig
-from task_datasets import IOIConfig, GTConfig
-from training_utils import load_model_data, LinePlot
-
+from utils.task_datasets import get_task_ds
+from utils.training_utils import load_model_data, LinePlot, load_args
+from pruners.EdgePruner import EdgePruner
 # %%
 # load model
 # model_name = "EleutherAI/pythia-70m-deduped"
@@ -37,42 +36,20 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
 # %%
-try:
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-l', '--lamb',
-                        help='regularization constant')
-    parser.add_argument('-s', '--subfolder',
-                        help='where to save stuff')
-    args = parser.parse_args()
-    reg_lamb = float(args.lamb)
-    subfolder = args.subfolder
-except:
-    reg_lamb = None
-    subfolder = None
-
-if reg_lamb is None:
-    reg_lamb = 2e-4
-
-node_reg=5e-3
+args = load_args("pruning_edges_auto", 1.8e-4, {"name": "edges_unifsd"})
+folder, reg_lamb, dataset = args["folder"], args["lamb"], args["dataset"]
+node_reg=2e-3
 gpu_requeue = True
 # reset_optim = 1000
 
-print(reg_lamb)
-
-if subfolder is not None:
-    folder=f"pruning_edges_auto/ioi_edges/{subfolder}"
-else:
-    folder=f"pruning_edges_auto/ioi_edges/{reg_lamb}"
-
 pretrained_folder = None
 # f"pruning_edges_auto/ioi/300.0"
-if not os.path.exists(folder):
-    os.makedirs(folder)
 
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=0)
 pruning_cfg.lamb = reg_lamb
+pruning_cfg.initialize_params_probs(1)
 
-task_ds = IOIConfig(pruning_cfg.batch_size, device)
+task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device)
 
 for param in model.parameters():
     param.requires_grad = False
@@ -84,7 +61,7 @@ for param in model.parameters():
 # retrain_length = 100
 
 # %%
-mask_sampler = EdgeMaskJointSampler(pruning_cfg, node_reg=node_reg)
+mask_sampler = EdgeMaskUnifSampler(pruning_cfg, node_reg=node_reg)
 edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
@@ -101,6 +78,7 @@ take_snapshot = partial(pruning_cfg.take_snapshot, edge_pruner, lp_count, sampli
 # if prune_retrain and edge_pruner.log.t == 0:
 #     edge_pruner.log.mode = "prune"
 #     edge_pruner.log.cur_counter = 0
+pruning_cfg.record_every = 50
 
 max_batches = 10000
 for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
@@ -124,7 +102,7 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
         grad_norm = torch.nn.utils.clip_grad_norm_(mask_sampler.sampling_params[k], max_norm=float('inf'))
         grad_norms.append(grad_norm.item())
         torch.nn.utils.clip_grad_norm_(mask_sampler.sampling_params[k], max_norm=5)
-    print(grad_norms)
+    # print(grad_norms)
 
     prev_alphas = mask_sampler.get_sampling_params()[:,0].detach().clone()
     prev_modes = edge_pruner.get_modes().detach().clone()
@@ -160,11 +138,21 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     if plotting:
         take_snapshot("")
+        grad = mask_sampler.sampling_params['attn-attn'][9].grad.flatten()
+        print(grad[grad.nonzero()].shape)
+        sns.scatterplot(x=mask_sampler.sampled_mask['attn-attn'][9].float().mean(dim=0).flatten()[grad.nonzero()].flatten().cpu().detach(),y=grad[grad.nonzero()].flatten().cpu())
+        plt.xlabel("Prob inclusion in batch")
+        plt.ylabel("Autograd")
+        plt.savefig(f"bernoulli/prior/unif_prob_grad_{j}.png")
+        plt.close()
+
+        sns.scatterplot(x=mask_sampler.sampling_params['attn-attn'][9].float().detach().flatten()[grad.nonzero()].flatten().cpu().detach(),y=grad[grad.nonzero()].flatten().cpu())
+        plt.xlabel("Sampling parameter")
+        plt.ylabel("Autograd")
+        plt.savefig(f"bernoulli/prior/unif_param_grad_{j}.png")
+
         if checkpointing:
             take_snapshot(f"-{no_batches}")
-        if edge_pruner.early_term() >= 10:
-            take_snapshot("-final")
-            break
     
     # if reset_optim is not None and no_batches % (-1 * reset_optim) == -1:
     #     modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)

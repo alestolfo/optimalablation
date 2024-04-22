@@ -94,87 +94,24 @@ ax = None
 # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
 folders=[
     ({
-        "vertex": "pruning_vertices_auto/ioi_with_mlp", 
-        "edges HC": "pruning_edges_auto/ioi_edges", 
-        "edges HC (vertex prior)": "pruning_edges_auto/ioi_vertex_prior", 
-        "edges uniform": "pruning_edges_auto/ioi_edges_unif", 
+        "vertex": "results/pruning_vertices_auto/ioi_with_mlp", 
+        "edges HC": "results/pruning_edges_auto/ioi_edges", 
+        "edges HC (vertex prior)": "results/pruning_edges_auto/ioi_vertex_prior", 
+        "edges uniform": "results/pruning_edges_auto/ioi_edges_unif", 
     }, {
-        "ACDC": "acdc_ioi_runs",
-        "eap": "eap_ioi_runs"
+        "ACDC": "results_baseline/acdc_ioi_runs",
+        "eap": "results_baseline/eap_ioi_runs"
     }, 0.15, 3000, "ioi"),
     ({
-        "vertex": "pruning_vertices_auto/gt", 
-        "edges HC": "pruning_edges_auto/gt_edges", 
-        "edges HC (vertex prior)": "pruning_edges_auto/gt_vertex_prior", 
-        "edges uniform": "pruning_edges_auto/gt_edges_unif", 
+        "vertex": "results/pruning_vertices_auto/gt", 
+        "edges HC": "results/pruning_edges_auto/gt_edges", 
+        "edges HC (vertex prior)": "results/pruning_edges_auto/gt_vertex_prior", 
+        "edges uniform": "results/pruning_edges_auto/gt_edges_unif", 
     }, {
-        "ACDC": "acdc_gt_runs",
-        "eap": "eap_gt_runs"
+        "ACDC": "results_baseline/acdc_gt_runs",
+        "eap": "results_baseline/eap_gt_runs"
     }, 0.05,1000,"gt"),
 ]
 
 for folder in folders:
     plot_pareto(folder)
-
-
-# %%
-
-# folders=[
-#     ({
-#         "edges": "pruning_edges_auto/ioi_clipped_edges", 
-#         "vertex": "pruning_vertices_auto/ioi_with_mlp", 
-#         "edges from vertex prior": "pruning_edges_auto/ioi_vertex_prior"
-#         # "reset_optim": "pruning_edges_auto/ioi_reinit",  
-#         # "prune_retrain": "pruning_edges_auto/ioi_reinit_lr",
-#     }, {
-#         "ACDC": "acdc_ioi_runs",
-#         "iterative": "pruning_edges_auto/ioi_iter",
-#         "manual": "pruning_vertices_auto/ioi_manual",
-#     }),
-#     # ([], ["pruning_edges_auto/ioi_iter"]),
-#     # "pruning_edges_auto-2-24/ioi-2-26",
-#     # "pruning_edges_auto-2-24/gt",
-#     # "pruning_edges_auto-2-26/ioi_zero_init",
-# ]
-
-# plt.plot(1176, 0.09452762454748154, 'gs')
-# plt.plot(1256, 0.10203401073813438, 'gs')
-# plt.plot(662, 0.10643498972058296, 'go')
-# plt.plot(2218, 0.10283389091491699, 'gs')
-# plt.plot(2896, 0.09150597080588341, 'go')
-# # plt.plot(1041, 0.06662799082696438, 'rP')
-# plt.plot(1666, 0.06662799082696438, 'rP')
-# plt.plot(1644, 0.09744843393564225, 'go')
-
-# manual 1041, 0.06662799082696438
-
-# 5e-4 -> -1, 662, 0.10643498972058296
-# 2e-4 -> 1.5, 1176, 0.09783206954598427
-# 2e-4 -> 1, 1256, 0.10203401073813438
-
-# %%
-
-# ax = None
-# reg_lambs = [1e-3, 5e-4, 2e-4, 1e-4, 5e-5]
-# for reg_lamb in reg_lambs:
-#     out_path=f"pruning_edges_auto/report/gt_{str(reg_lamb).replace('.', '-')}.pkl"
-#     with open(out_path, "rb") as f:
-#         log = pickle.load(f)
-#     if ax is None:
-#         sns.lineplot(x=log["clipped_edges"], y=log["losses"], label=reg_lamb)
-#     else:
-#         sns.lineplot(x=log["clipped_edges"], y=log["losses"], ax=ax, label=reg_lamb)
-    
-#     print(log['tau'])
-#     undot = True
-#     for i,tau in enumerate(log['tau']):
-#         if tau >= -1 and undot:
-#             plt.plot(log["clipped_edges"][i], log["losses"][i], 'k^')
-#             undot = False
-#         if tau >= 1:
-#             plt.plot(log["clipped_edges"][i], log["losses"][i], 'ks')
-#             break
-
-# plt.plot(262, 0.035, 'rP')
-
-# %%

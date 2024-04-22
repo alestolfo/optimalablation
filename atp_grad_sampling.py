@@ -17,11 +17,11 @@ import seaborn as sns
 import argparse
 import matplotlib.pyplot as plt
 import pickle
-from training_utils import load_model_data, LinePlot, update_means_variances_mixed
-from MaskSampler import MultiComponentMaskSampler, ConstantMaskSampler
-from VertexPruner import VertexPruner
-from utils.MaskConfig import VertexInferenceConfig
-from task_datasets import IOIConfig, GTConfig
+from ..utils.MaskConfig import VertexInferenceConfig
+from ..utils.training_utils import load_model_data, LinePlot, update_means_variances_mixed
+from ..utils.task_datasets import IOIConfig, GTConfig
+from ..mask_samplers.MaskSampler import MultiComponentMaskSampler, ConstantMaskSampler
+from ..vertex_pruning.VertexPruner import VertexPruner
 
 # %%
 

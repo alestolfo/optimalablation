@@ -3,11 +3,11 @@ import torch
 from sys import argv
 from functools import partial
 import torch.optim
-from VertexPruner import VertexPruner
+from pruners.VertexPruner import VertexPruner
 from mask_samplers.MaskSampler import ConstantMaskSampler
 from utils.MaskConfig import VertexInferenceConfig
-from task_datasets import IOIConfig, GTConfig
-from training_utils import load_model_data, LinePlot
+from utils.task_datasets import get_task_ds
+from utils.training_utils import load_model_data, LinePlot
 
 # %%
 # load model
@@ -20,19 +20,16 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
 # settings
-try:
-    reg_lamb = float(argv[1])
-except:
-    reg_lamb=1e-4
-
-folder=f"pruning_vertices_auto/ioi_with_mlp"
+dataset = "ioi"
+# dataset = argv[1]
+folder=f"results/pruning_vertices_auto/{dataset}"
 
 batch_size=50
 pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
-pruning_cfg.lamb = reg_lamb
+pruning_cfg.lamb = 1
 pruning_cfg.n_samples = 1
 
-task_ds = IOIConfig(batch_size, device)
+task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device)
 ds_test = task_ds.get_test_set(tokenizer)
 
 for param in model.parameters():

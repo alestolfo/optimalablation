@@ -13,11 +13,12 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from training_utils import load_model_data, save_hook_last_token, LinePlot
+from utils.training_utils import load_model_data, save_hook_last_token, LinePlot
 
 # %%
 sns.set()
-folder="old_results/modal_lens/no_decay"
+folder="results/modal_lens/no_decay"
+tuned_lens_folder = "results_baseline/tuned_lens"
 shared_bias = False
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"
@@ -146,7 +147,6 @@ for i in tqdm(range(10000)):
             
 # modal lens inference
 # folder="modal_lens"
-tuned_lens_folder = "old_results/pruning/tuned_lens"
 with open(f"{folder}/modal_lens_weights.pkl", "rb") as f:
     attn_bias = pickle.load(f)
 
