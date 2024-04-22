@@ -57,7 +57,7 @@ class MaskSampler(torch.nn.Module):
     def get_sampling_params(self):
         # returns N x 2 tensor
         return torch.cat([ts.flatten(start_dim=0, end_dim=-2) if len(ts.shape) > 1 else ts.unsqueeze(0) for k in self.sampling_params for ts in self.sampling_params[k]], dim=0)
-    
+        
     def sample_hard_concrete(self, unif, sampling_params):
         # back prop against log alpha
         endpts = self.pruning_cfg.hard_concrete_endpoints
@@ -73,11 +73,12 @@ class MaskSampler(torch.nn.Module):
         prune_mask = {}
         for k in self.sampling_params:
             prune_mask[k] = []
-            for ts in self.sampling_params[k]:
+            for i, ts in enumerate(self.sampling_params[k]):
                 # if ts.nelement() == 0:
                 #     prune_mask[k].append(None)
                 #     continue
                 unif = torch.rand((bsz, *ts.shape[:-1])).to(self.pruning_cfg.device)
+
                 prune_mask[k].append(self.sampling_function(unif, ts))
 
         self.sampled_mask = prune_mask

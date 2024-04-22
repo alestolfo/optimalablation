@@ -2,6 +2,7 @@
 import torch
 import datasets
 import os
+import numpy as np
 from sys import argv
 from torch.utils.data import DataLoader
 from transformer_lens import HookedTransformer
@@ -18,7 +19,7 @@ from itertools import cycle
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from mask_samplers.EdgeMaskSampler import EdgeMaskUnifSampler
+from mask_samplers.EdgeMaskSampler import EdgeMaskUnifWindowSampler
 from utils.MaskConfig import EdgeInferenceConfig
 from utils.task_datasets import get_task_ds
 from utils.training_utils import load_model_data, LinePlot, load_args
@@ -36,7 +37,7 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
 # %%
-args = load_args("pruning_edges_auto", 1.8e-4, {"name": "edges_unifsd"})
+args = load_args("pruning_edges_auto", 1.8e-4, {"name": "edges_unif_window"})
 folder, reg_lamb, dataset = args["folder"], args["lamb"], args["dataset"]
 node_reg=2e-3
 gpu_requeue = True
@@ -55,13 +56,9 @@ for param in model.parameters():
     param.requires_grad = False
 
 # %%
+mask_sampler = EdgeMaskUnifWindowSampler(pruning_cfg, node_reg=node_reg, default_window=0.1)
+mask_sampler.fix_mask = True
 
-# prune_retrain = True
-# prune_length = 200
-# retrain_length = 100
-
-# %%
-mask_sampler = EdgeMaskUnifSampler(pruning_cfg, node_reg=node_reg)
 edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
@@ -74,10 +71,13 @@ modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.mo
 lp_count = pruning_cfg.load_snapshot(edge_pruner, sampling_optimizer, modal_optimizer, gpu_requeue, pretrained_folder=None)
 
 take_snapshot = partial(pruning_cfg.take_snapshot, edge_pruner, lp_count, sampling_optimizer, modal_optimizer)
-# %%
-pruning_cfg.record_every = 50
 
-max_batches = 10000
+# %%
+
+pruning_cfg.record_every = 500
+# bias_variance_checkpoints = [1, 50, 100, 200, 400, 800, 1500, 2500, 4000]
+
+max_batches = 6000
 for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     plotting = no_batches % (-1 * pruning_cfg.record_every) == -1
@@ -91,8 +91,14 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     # sample prune mask
     graph_suffix = f"-{no_batches}" if checkpointing else "" if plotting else None
+    mask_sampler.sample_window_mask()
     loss = edge_pruner(batch, last_token_pos, graph_suffix)
     loss.backward()
+
+    mask_sampler.compile_grads_exponential()
+
+    if no_batches > 50:
+        mask_sampler.update_window(mask_sampler.default_window * .999)
 
     grad_norms = mask_sampler.clip_grad(5)
 
@@ -116,19 +122,19 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     if plotting:
         take_snapshot("")
-        grad = mask_sampler.sampling_params['attn-attn'][9].grad.flatten()
-        print(grad[grad.nonzero()].shape)
-        sns.scatterplot(x=mask_sampler.sampled_mask['attn-attn'][9].float().mean(dim=0).flatten()[grad.nonzero()].flatten().cpu().detach(),y=grad[grad.nonzero()].flatten().cpu())
-        plt.xlabel("Prob inclusion in batch")
-        plt.ylabel("Autograd")
-        plt.savefig(f"bernoulli/prior/unif_prob_grad_{j}.png")
+
+        sns.histplot(x=mask_sampler.running_mean.log().flatten().cpu(), y=mask_sampler.running_variance.log().flatten().cpu())
+        plt.savefig(f"{folder}/meanvar_{no_batches}.png")
         plt.close()
 
-        sns.scatterplot(x=mask_sampler.sampling_params['attn-attn'][9].float().detach().flatten()[grad.nonzero()].flatten().cpu().detach(),y=grad[grad.nonzero()].flatten().cpu())
-        plt.xlabel("Sampling parameter")
-        plt.ylabel("Autograd")
-        plt.savefig(f"bernoulli/prior/unif_param_grad_{j}.png")
+        sns.histplot(x=mask_sampler.windows.flatten().cpu(), y=mask_sampler.running_variance.log().flatten().cpu())
+        plt.savefig(f"{folder}/windows_{no_batches}.png")
+        plt.close()
+
+        sns.histplot(x=mask_sampler.get_sampling_params().detach().flatten().cpu(), y=mask_sampler.windows.log().flatten().cpu())
+        plt.savefig(f"{folder}/sampling_params_{no_batches}.png")
+        plt.close()
 
         if checkpointing:
             take_snapshot(f"-{no_batches}")
-# %%
+   # %%
