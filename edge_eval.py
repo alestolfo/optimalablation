@@ -35,7 +35,7 @@ except:
     reg_lamb=1e-4
 
 dataset = "ioi"
-folder=f"pruning_edges_auto/{dataset}_edges_unif"
+folder=f"results/pruning_edges_auto/{dataset}_edges_unif"
 load_edges = False
 
 batch_size=50

@@ -9,15 +9,15 @@ import math
 from functools import partial
 import torch.optim
 import time
-from encoders import UntiedEncoder
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from training_utils import load_model_data, tuned_lens_hook, LinePlot
+from utils.lens_utils import apply_lens
+from utils.training_utils import load_model_data, save_hook_last_token, LinePlot
 
 # %%
-
-folder="pruning/tuned_lens"
+sns.set()
+folder="results/tuned_lens"
 # model_name = "EleutherAI/pythia-70m-deduped"
 model_name = "gpt2-small"
 batch_size = 200
@@ -29,119 +29,75 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 head_dim = model.cfg.d_head
 d_model = model.cfg.d_model
-lr = 1e-3
-# # learning hyperparameters
-# convergence_tol = 1e-4
-# similarity_tol = .05
-# lr_act = 1e-4
-# lr_feat = 1e-5
-# updates_per_batch = 100
-# relu = torch.nn.ReLU()
+lr = 1e-2
+
 kl_loss = torch.nn.KLDivLoss(reduction="none")
 
 resid_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_resid_pre"
 
 # %%
 
-tuned_lens_weights = [torch.nn.Parameter(torch.rand(d_model, d_model).to(device)) for _ in range(n_layers)]
-tuned_lens_bias = [torch.nn.Parameter(torch.rand(d_model,).to(device)) for _ in range(n_layers)]
-tuned_lens_optimizer = torch.optim.AdamW([*tuned_lens_weights, *tuned_lens_bias], lr=lr, weight_decay=1e-3)
+lens_weights = [torch.nn.Parameter(torch.randn(d_model, d_model).to(device)) for _ in range(n_layers)]
+lens_bias = [torch.nn.Parameter(torch.randn(d_model,).to(device)) for _ in range(n_layers)]
+lens_optimizer = torch.optim.AdamW([*lens_weights, *lens_bias], lr=lr, weight_decay=0)
 
 for param in model.parameters():
     param.requires_grad = False
 
-# %%
-    
-def get_tuned_lens_loss(batch):
-    activation_storage = []
+for p in lens_weights:
+    p.register_hook(lambda grad: torch.nan_to_num(grad, nan=0, posinf=0, neginf=0))
 
-    target_probs = model.run_with_hooks(
-            batch,
-            fwd_hooks=[
-                (partial(resid_points_filter, layer_no), 
-                   partial(tuned_lens_hook,
-                           activation_storage,
-                           tuned_lens_weights[layer_no],
-                           tuned_lens_bias[layer_no])
-                    ) for layer_no in range(n_layers)
-                ]
-    )[:,-1].softmax(dim=-1)
-    # activation_storage is array of tensors batch_size x seq_len x d_model, len=n_layers
-    # (batch_size * n_layers) x seq_len x d_model
-    # batch_size x n_layers x d_model
-    residual = model.ln_final(torch.stack(activation_storage, dim=1))
-
-    # n_layers x batch_size x d_model
-    # residual = model.unembed(residual)[:,-1].softmax(dim=-1).unflatten(0, (batch_size, n_layers)).permute((1,0,2))
-    residual = model.unembed(residual).softmax(dim=-1).permute((1,0,2))
-
-    # n_layers x batch_size
-    kl_losses = kl_loss(residual.log(), target_probs).sum(dim=-1)
-
-    return kl_losses, activation_storage
-
-
+for p in lens_bias:
+    p.register_hook(lambda grad: torch.nan_to_num(grad, nan=0, posinf=0, neginf=0))
 # %%
 
-lp = LinePlot([*[f"kl_loss_{k}" for k in range(n_layers)], 'step_size'])
+tuned_loss_series = [f"kl_loss_{k}" for k in range(n_layers)]
+lp = LinePlot([*tuned_loss_series, 'step_size'])
     
 i = 0
-for i in tqdm(range(10000)):
+for i in tqdm(range(50000)):
     batch = next(owt_iter)['tokens']
-    tuned_lens_optimizer.zero_grad()
+    lens_optimizer.zero_grad()
 
-    kl_losses, _ = get_tuned_lens_loss(batch)
-    kl_losses = kl_losses.mean(dim=-1)
+    activation_storage = []
+
+    model_probs = model.run_with_hooks(
+            batch,
+            fwd_hooks=[
+                *[(partial(resid_points_filter, layer_no), 
+                   partial(save_hook_last_token, activation_storage),
+                    ) for layer_no in range(n_layers)],
+                ]
+    )[:,-1].softmax(dim=-1).unsqueeze(1)
+
+    lens_probs = apply_lens(model, lens_weights, lens_bias, activation_storage)
+
+    kl_losses = kl_loss(lens_probs.log(), model_probs).sum(dim=-1).mean(dim=0)
+    
     loss = kl_losses.sum()
     loss.backward()
 
-    prev_weights = torch.stack(tuned_lens_weights, dim=0).detach()
+    prev_weights = torch.stack(lens_weights, dim=0).detach()
 
-    tuned_lens_optimizer.step()
+    lens_optimizer.step()
 
-    step_sz = (torch.stack(tuned_lens_weights, dim=0)-prev_weights).abs().sum()
-    lp.add_entry({"step_size": step_sz.item(), **{f"kl_loss_{k}": kl_losses[k].item() for k in range(n_layers)}})
+    step_sz = (torch.stack(lens_weights, dim=0)-prev_weights).abs().sum()
+    lp.add_entry({
+        "step_size": step_sz.item(), 
+        **{f"kl_loss_{k}": kl_losses[k].item() for k in range(n_layers)}
+    })
 
     if math.isnan(lp.stat_book["step_size"][-1]):
         break
 
-    if i % 500 == 10:
-        lp.plot(subplots=3, save=f"{folder}/train.png", twinx=False, mv=20)
-
-        with open(f"{folder}/tuned_lens_weights.pkl", "wb") as f:
-            pickle.dump(tuned_lens_weights, f)
-        with open(f"{folder}/tuned_lens_bias.pkl", "wb") as f:
-            pickle.dump(tuned_lens_bias, f)
+    if i % -500 == -1:
+        lp.plot(series=tuned_loss_series, subplots=3, save=f"{folder}/train.png", twinx=False, mv=20)
+        with open(f"{folder}/lens_weights.pkl", "wb") as f:
+            pickle.dump(lens_weights, f)
+        with open(f"{folder}/lens_bias.pkl", "wb") as f:
+            pickle.dump(lens_bias, f)
     
     i += 1
-
-  # %%
-    
-# with open(f"{folder}/tuned_lens_weights.pkl", "wb") as f:
-#     pickle.dump(tuned_lens_weights, f)
-# with open(f"{folder}/tuned_lens_bias.pkl", "wb") as f:
-#     pickle.dump(tuned_lens_bias, f)
-
-# # %%
-
-with open(f"{folder}/tuned_lens_weights.pkl", "rb") as f:
-    tuned_lens_weights = pickle.load(f)
-with open(f"{folder}/tuned_lens_bias.pkl", "rb") as f:
-    tuned_lens_bias = pickle.load(f)
-
-# %%
-# # tuned lens inference
-
-all_loss = []
-for i in tqdm(range(50)):
-    batch = next(owt_iter)['tokens']
-
-    with torch.no_grad():
-        tuned_lens_loss, activation_storage = get_tuned_lens_loss(batch)
-        all_loss.append(tuned_lens_loss)
-    
-print(torch.stack(all_loss, dim=1).mean(dim=[1,2]))
- 
 
 # %%
 

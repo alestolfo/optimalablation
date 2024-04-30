@@ -17,7 +17,7 @@ sbatch <<EOT
 # Your commands here
 module load Anaconda2
 conda activate take2
-python3 edge_pruning_unif_window.py -d ioi -n unif --lamb $var
+python3 edge_pruning_unif_bias_calc.py -d ioi -n unif_window --lamb $var
 
 EOT
 done

@@ -4,6 +4,7 @@ import os
 from sys import argv
 from tqdm import tqdm
 import torch.optim
+import pickle
 from pruners.EdgePruner import EdgePruner
 from mask_samplers.MaskSampler import ConstantMaskSampler
 from utils.MaskConfig import EdgeInferenceConfig
@@ -53,19 +54,23 @@ if run_name == "acdc" or run_name == "eap":
     print(c_e)
     print(clipped_e)
 else:
-    prune_mask, state_dict = retrieve_mask(folder)
+    prune_mask = retrieve_mask(folder)
     discrete_mask = discretize_mask(prune_mask, tau)
     cpm, edges, clipped_edges, _, _ = prune_dangling_edges(discrete_mask)
     mask_sampler.set_mask(cpm)
 
-if os.path.exists(f"{folder}/fit_nodes_{tau}.pth"):
-    state_dict = torch.load(f"{folder}/fit_nodes_{tau}.pth")
-    edge_pruner.load_state_dict(state_dict, strict=False)
+# if os.path.exists(f"{folder}/fit_nodes_{tau}.pth"):
+#     if os.path.exists(f"{folder}/fit_loss_log.pkl"):
+#         with open(f"{folder}/fit_loss_log.pkl", "rb") as f:
+#             log = pickle.load(f)
+#         edge_pruner.log = log
+#     state_dict = torch.load(f"{folder}/fit_nodes_{tau}.pth")
+#     edge_pruner.load_state_dict(state_dict, strict=False)
 
-modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
+modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=5 * pruning_cfg.lr_modes, weight_decay=0)
 
 # %%
-max_batches = 6000
+max_batches = 10000
 for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     modal_optimizer.zero_grad()
@@ -83,5 +88,9 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
     if no_batches % -100 == -1:
         print(f"Saving {folder}/fit_modes_{tau}.pth")
         torch.save({"modal_attention": edge_pruner.modal_attention, "modal_mlp": edge_pruner.modal_mlp}, f"{folder}/fit_modes_{tau}.pth")
+        
+        with open(f"{folder}/fit_loss_log.pkl", "wb") as f:
+            pickle.dump(edge_pruner.log, f)
+        
         edge_pruner.log.plot(["kl_loss"], mv=100, save=f"{folder}/fit_modes_{tau}.png")
 # %%
