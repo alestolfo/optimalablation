@@ -188,6 +188,7 @@ class InferenceConfig:
         if out_format == "edges":
             log["edges"] = []
             log["clipped_edges"] = []
+            log["vertices"] = []
         
         for lamb_path in glob.glob(f"{self.folder}/*"):
             lamb = lamb_path.split("/")[-1]
@@ -222,10 +223,13 @@ class InferenceConfig:
                 discrete_mask = discretize_mask(prune_mask, tau)
                                     
                 if in_format=="edges":
-                    discrete_mask, edges, clipped_edges, _, _ = prune_dangling_edges(discrete_mask)
+                    discrete_mask, edges, clipped_edges, attn_vertices, mlp_vertices = prune_dangling_edges(discrete_mask)
+                    total_vertices = (attn_vertices > 0).sum() + (mlp_vertices > 0).sum()
                 elif out_format=="edges":
-                    _, edges = mask_to_edges(nodes_to_mask(mask_to_nodes(discrete_mask, mask_type="nodes")[0], all_mlps=False))
+                    vertices, total_vertices = mask_to_nodes(discrete_mask, mask_type="nodes")
+                    _, edges = mask_to_edges(nodes_to_mask(vertices, all_mlps=False))
                     clipped_edges = edges
+
                 mask_sampler.set_mask(discrete_mask)
 
                 component_pruner.load_state_dict(torch.load(tau_path), strict=False)
@@ -243,6 +247,7 @@ class InferenceConfig:
                 log["tau"].append(tau)
                 log["edges"].append(edges)
                 log["clipped_edges"].append(clipped_edges)
+                log["vertices"].append(total_vertices)
                 log["losses"].append(avg_loss)
                 print("Clipped edges", clipped_edges)
                 print("Avg KL loss", avg_loss)

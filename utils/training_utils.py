@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import os
+import math
 import argparse
 from utils.data import retrieve_owt_data
 
@@ -34,7 +35,7 @@ def load_args(run_type, default_lamb, defaults={}):
                             help='ioi or gt')
         parser.add_argument('-s', '--subfolder',
                             help='where to load/save stuff')
-        parser.add_argument('-t', '--priorscale',
+        parser.add_argument('-c', '--priorscale',
                             help='prior strength')
         parser.add_argument('-p', '--priorlamb',
                             help='which vertex lambda')
@@ -44,12 +45,18 @@ def load_args(run_type, default_lamb, defaults={}):
                             help='threshold to use for post training')
 
         args = parser.parse_args()
+        args = vars(args)
 
         for k in args:
             my_args[k] = args[k]
-            if k in {"lamb", "priorscale", "priorlamb", "tau"}:
+            if k in {"lamb", "priorscale", "priorlamb", "tau"} and my_args[k] is not None:
                 my_args[k] = float(my_args[k])
+    except Exception as e:
+        print(e)
+        print("Resetting to default parameters")
+        pass
     except:
+        print("Resetting to default parameters")
         pass
 
     print(my_args["lamb"])
@@ -191,25 +198,81 @@ def update_means_variances(prev_means, prev_vars, batch_results, no_batches):
 # rec = number of items to record
 # prev_means: rec x 1
 # prev_vars: rec x 1
-# batch_results: rec x n_samples
-# n_batches_by_head: rec x 1
-# n_samples_by_head: rec x 1
-# batch_samples_by_head: rec x n_samples
+# batch_results: rec x n_samples (rec x 1 if just one batch). Assumed to be mean, not sum.
+# n_batches_by_head: rec x 1 (previous no. batches)
+# n_samples_by_head: rec x 1 (previous no. samples)
+# batch_samples_by_head: rec x n_samples (rec x 1 if just one batch)
 def update_means_variances_mixed(prev_means, prev_vars, batch_results, n_batches_by_head, n_samples_by_head, batch_samples_by_head):
     # computing variance iteratively using a trick
     new_batches_by_head = n_batches_by_head + (batch_samples_by_head > 0).sum(dim=-1, keepdim=True)
     new_samples_by_head = n_samples_by_head + batch_samples_by_head.sum(dim=-1, keepdim=True)
 
-    means = (n_samples_by_head * prev_means + (batch_samples_by_head * batch_results).sum(dim=-1, keepdim=True)) / new_samples_by_head
+    means = prev_means * n_samples_by_head
+    means = means + (batch_samples_by_head * batch_results).sum(dim=-1, keepdim=True)
+    means = torch.where(
+        new_samples_by_head > 0,
+        means / new_samples_by_head,
+        means
+    )
 
     prev_vars = prev_vars * (n_batches_by_head - 1)
     vars = prev_vars + (batch_samples_by_head * (batch_results - prev_means).square()).sum(dim=-1, keepdim=True) - new_samples_by_head * (means - prev_means).square()
+
+
+    # print(batch_samples_by_head * (batch_results - prev_means).square())
+    # print(new_samples_by_head * (means - prev_means).square())
+    # print(batch_samples_by_head)
+    # print(means)
+    # print(prev_means)
+    # print(new_batches_by_head)
+    # print(vars)
+
+    print((batch_samples_by_head * (batch_results - prev_means).square()).sum(dim=-1, keepdim=True) - new_samples_by_head * (means - prev_means).square())
+
     vars = torch.where(
-        vars > 0,
+        new_batches_by_head > 1,
         vars / (new_batches_by_head - 1),
         vars
     )
     
+    return means, vars, new_batches_by_head, new_samples_by_head
+
+# %%
+
+# only accepts a single batch at a time
+# n_batches_by_head should be initialized to 0
+def update_means_variances_exponential(prev_means, prev_vars, batch_results, n_batches_by_head, n_samples_by_head, batch_samples_by_head, alpha=0.9):
+    new_samples_by_head = alpha * n_samples_by_head + (1-alpha) * batch_samples_by_head
+    new_w = torch.where(
+        new_samples_by_head > 0,
+        (math.log(alpha) * batch_samples_by_head / new_samples_by_head).exp(),
+        0
+    )
+    
+    # total mass of exponential-weighted sequence. If new_batches_by_head=0, then it should be 1.
+    new_batches_by_head = 1 - (1 - n_batches_by_head) * new_w
+
+    prev_means = prev_means * n_batches_by_head
+    means = new_w * prev_means + (1-new_w) * batch_results
+
+    prev_vars = prev_vars * n_batches_by_head
+    vars = new_w * prev_vars + (1-new_w) * (batch_results - prev_means).square() - (means - prev_means).square()
+    vars = torch.where(
+        vars < 0,
+        0,
+        vars
+    )
+
+    means = torch.where(
+        new_batches_by_head > 0,
+        means / new_batches_by_head,
+        means
+    )
+    vars = torch.where(
+        new_batches_by_head > 0,
+        vars / new_batches_by_head,
+        vars
+    )
     return means, vars, new_batches_by_head, new_samples_by_head
 
 
@@ -274,6 +337,10 @@ class LinePlot:
                 self.stat_book[k].append(self.stat_book[k][-1])
         self.t += 1
     
+    def mv_avg(self, series, mv=50):
+        yvals = self.stat_book[series]
+        return [np.mean(yvals[i:min(len(yvals),i+mv)]) for i in range(len(yvals))]
+    
     def stat_sig_growth(self, series, avg_intv=10, comp_intv=200, start_t=0):
         if self.t - start_t <= comp_intv + avg_intv + 1:
             return False
@@ -282,8 +349,19 @@ class LinePlot:
 
         # decline, growth
         return 1 - rolling_avg / np.quantile(historical_avg, .1), rolling_avg / np.quantile(historical_avg, .9) - 1
-        
-    def plot(self, series=None, subplots=None, step=1, start=None, end=0, agg='mean', twinx=True, mv=False, save=None):
+    
+    def compare_plot(self, series, mv, compare_log, title="", start=100):
+        max_t = min(self.t, compare_log.t)
+        sns.lineplot(self.mv_avg(series, mv=mv)[start:], label="control")
+        sns.lineplot(compare_log.mv_avg(series, mv=mv)[start:], label="new")
+        plt.legend()
+        plt.title(title)
+        plt.minorticks_on()
+        plt.grid(visible=True, which='major', color='k', linewidth=1)
+        plt.grid(visible=True, which='minor', color='k', linewidth=0.5)
+        plt.show()
+
+    def plot(self, series=None, subplots=None, step=1, start=None, end=0, agg='mean', twinx=True, mv=False, save=None, gridlines=False):
         if start is None:
             start = self.pref_start
         if series is None:
@@ -328,6 +406,11 @@ class LinePlot:
             if mv:
                 mv_series = [np.mean(yvals[i:min(len(yvals),i+mv)]) for i in range(len(yvals))]
                 sns.lineplot(x=t, y=mv_series, label=f"{s}_mv_{mv}", ax=cur_ax)
+        if gridlines:
+            plt.minorticks_on()
+            plt.grid(visible=True, which='major', color='k', linewidth=1)
+            plt.grid(visible=True, which='minor', color='k', linewidth=0.5)
+
         if h is None:
             plt.legend()
         else:

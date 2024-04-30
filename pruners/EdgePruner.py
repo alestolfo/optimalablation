@@ -51,6 +51,7 @@ class EdgePruner(torch.nn.Module):
         
         columns =  ['kl_loss', *self.mask_sampler.log_columns]
         self.log = LinePlot(columns)
+        self.pause_log = False
 
         self.cache_hooks = self.get_cache_hooks()
         self.patching_hooks = self.get_patching_hooks()
@@ -397,7 +398,8 @@ class EdgePruner(torch.nn.Module):
                 "kl_loss": kl_losses.mean().item(), 
                 **mask_details
             }
-            self.log.add_entry(log_entry)
+            if self.pause_log is False:
+                self.log.add_entry(log_entry)
 
             if graph_suffix is not None:
                 j = graph_suffix
