@@ -62,7 +62,7 @@ for param in model.parameters():
 
 # %%
 mask_sampler = MultiComponentMaskSampler(pruning_cfg, prop_sample=0.001)
-vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
+vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 vertex_pruner.add_patching_hooks()
 # vertex_pruner.cache_ablations = True
 
@@ -89,8 +89,7 @@ for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
     sampling_optimizer.zero_grad()
 
     loss = vertex_pruner(batch, last_token_pos)
-    mean_loss = loss.sum()
-    mean_loss.backward()
+    loss.backward()
 
     atp_losses = torch.cat([ts.grad for ts in mask_sampler.mask_perturb['attn']], dim=0).unsqueeze(-1)
 
@@ -180,11 +179,8 @@ for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
     loss = vertex_pruner(batch, last_token_pos)
 
     print(loss)
-    loss.sum().backward()
-
-    # mean_loss = loss.sum()
-    # mean_loss.backward()
-
+    loss.backward()
+    
     # atp_losses = torch.cat([ts.grad for ts in mask_sampler.mask_perturb['attn']], dim=0).unsqueeze(-1)
 
     # batch_n_samples = []

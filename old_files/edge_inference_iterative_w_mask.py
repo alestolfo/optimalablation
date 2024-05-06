@@ -52,7 +52,7 @@ for param in model.parameters():
 
 # %%
 mask_sampler = ConstantMaskSampler()
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True, ablation_backward=True)
+edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, ablation_backward=True)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
@@ -96,7 +96,7 @@ for lamb_path in glob.glob(f"{folder}/*"):
         batch, last_token_pos = task_ds.next_batch(tokenizer, next(ds_iter))
         with torch.no_grad():
             loss = edge_pruner(batch, last_token_pos, timing=False)
-            kl_losses.append(loss.mean().item())
+            kl_losses.append(loss.item())
 
     avg_loss = np.mean(kl_losses)
     log["lamb"].append(lamb)

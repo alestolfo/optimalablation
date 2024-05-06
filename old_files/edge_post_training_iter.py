@@ -46,7 +46,7 @@ for param in model.parameters():
 
 # %%
 mask_sampler = ConstantMaskSampler()
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True, ablation_backward=True)
+edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, ablation_backward=True)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
@@ -77,12 +77,7 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     batch, last_token_pos = task_ds.next_batch(tokenizer)
     loss = edge_pruner(batch, last_token_pos, timing=False)
-
-    edge_pruner.log.add_entry({
-        "kl_loss": loss.mean().item()
-    })
-
-    loss.mean().backward()
+    loss.backward()
     modal_optimizer.step()
 
     if no_batches % -100 == -1:

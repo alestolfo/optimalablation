@@ -48,7 +48,7 @@ pretrained_folder = None
 # f"pruning_edges_auto/ioi/300.0"
 
 init_param = 0
-pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=init_param)
+pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=init_param, use_temp=True)
 pruning_cfg.lamb = reg_lamb
 
 task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device)
@@ -93,7 +93,7 @@ if run_name == "vertex_prior":
         ts += init_param + prior_scale * (src_contrib + dest_contrib)
 
     pruning_cfg.constant_prune_mask = edge_prune_mask
-    pruning_cfg.initialize_params(1,None)
+    pruning_cfg.initialize_params(1, use_temp=True)
 
 # %%
 # prune_retrain = True

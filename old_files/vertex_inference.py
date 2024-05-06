@@ -46,7 +46,7 @@ for param in model.parameters():
 
 # %%
 mask_sampler = ConstantMaskSampler()
-vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
+vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 vertex_pruner.add_patching_hooks()
 
 # %%
@@ -94,7 +94,7 @@ for g in glob.glob(f"{base_folder}/*"):
             batch, last_token_pos = task_ds.next_batch(tokenizer,next(ds_iter))
             with torch.no_grad():
                 loss = vertex_pruner(batch, last_token_pos, timing=False)
-            kl_losses.append(loss.mean().item())
+            kl_losses.append(loss.item())
         avg_loss = np.mean(kl_losses)
         log["edges"].append(edges)
         log["clipped_edges"].append(clipped_edges)

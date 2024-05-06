@@ -74,7 +74,7 @@ for k in prune_mask:
         ts *= 0.5
 
 pruning_cfg.constant_prune_mask = prune_mask
-pruning_cfg.initialize_params_probs(1)
+pruning_cfg.initialize_params(1)
 
 # prune_retrain = True
 # prune_length = 200
@@ -134,6 +134,7 @@ for no_batches in tqdm(range(10000)):
         # sample prune mask
         graph_suffix = f"-{no_batches}" if checkpointing else "" if plotting else None
         loss, mask_loss = edge_pruner(batch, last_token_pos, graph_suffix, separate_loss=True)
+        loss = loss.flatten(start_dim=0,end_dim=1)
 
     log_probs = mask_sampler.compute_log_probs(mask_sampler.sampled_mask)
     complexity_loss = mask_sampler.get_mask_loss()

@@ -47,9 +47,8 @@ gpu_requeue = True
 pretrained_folder = None
 # f"pruning_edges_auto/ioi/300.0"
 
-pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=0)
+pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=1)
 pruning_cfg.lamb = reg_lamb
-pruning_cfg.initialize_params_probs(1)
 
 task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device)
 

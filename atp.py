@@ -17,11 +17,11 @@ import seaborn as sns
 import argparse
 import matplotlib.pyplot as plt
 import pickle
-from ..utils.training_utils import load_model_data, LinePlot, update_means_variances
-from ..utils.MaskConfig import VertexInferenceConfig
-from ..utils.task_datasets import IOIConfig, GTConfig
-from ..mask_samplers.MaskSampler import AttributionPatchingMaskSampler, MultiComponentMaskSampler
-from ..vertex_pruning.VertexPruner import VertexPruner
+from utils.training_utils import load_model_data, LinePlot, update_means_variances
+from utils.MaskConfig import VertexInferenceConfig
+from utils.task_datasets import IOIConfig, GTConfig
+from mask_samplers.MaskSampler import AttributionPatchingMaskSampler, MultiComponentMaskSampler
+from pruners.VertexPruner import VertexPruner
 
 # %%
 
@@ -62,7 +62,7 @@ for param in model.parameters():
 
 # %%
 mask_sampler = AttributionPatchingMaskSampler(pruning_cfg)
-vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
+vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 vertex_pruner.add_patching_hooks()
 # vertex_pruner.cache_ablations = True
 
@@ -88,8 +88,7 @@ for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
     sampling_optimizer.zero_grad()
 
     loss = vertex_pruner(batch, last_token_pos)
-    mean_loss = loss.mean()
-    mean_loss.backward()
+    loss.backward()
 
     sampling_optimizer.step()
 

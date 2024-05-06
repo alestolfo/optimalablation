@@ -32,7 +32,6 @@ gpu_requeue = True
 
 batch_size = 75
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
-# pruning_cfg.lamb = reg_lamb
 pruning_cfg.n_samples = 1
 
 task_ds = get_task_ds(dataset, batch_size, device)
@@ -42,22 +41,23 @@ for param in model.parameters():
 
 # %%
 mask_sampler = ConstantMaskSampler()
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
+edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
 if run_name == "acdc" or run_name == "eap":
-    acdc_edges_file=f"{folder}/edges_{reg_lamb}.pth"
+    p_folder = folder.rsplit("/", 1)[0]
+    acdc_edges_file=f"{p_folder}/edges_{reg_lamb}.pth"
     edge_list = torch.load(acdc_edges_file)
-    prune_mask = edges_to_mask(edge_list)
-    cpm, c_e, clipped_e, _, _ = prune_dangling_edges(prune_mask)
-    print(c_e)
-    print(clipped_e)
+    discrete_mask = edges_to_mask(edge_list)
 else:
     prune_mask = retrieve_mask(folder)
     discrete_mask = discretize_mask(prune_mask, tau)
-    cpm, edges, clipped_edges, _, _ = prune_dangling_edges(discrete_mask)
-    mask_sampler.set_mask(cpm)
+
+cpm, c_e, clipped_e, _, _ = prune_dangling_edges(discrete_mask)
+print(c_e)
+print(clipped_e)
+mask_sampler.set_mask(cpm)
 
 # if os.path.exists(f"{folder}/fit_nodes_{tau}.pth"):
 #     if os.path.exists(f"{folder}/fit_loss_log.pkl"):
@@ -77,12 +77,7 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     batch, last_token_pos = task_ds.next_batch(tokenizer)
     loss = edge_pruner(batch, last_token_pos, timing=False)
-
-    edge_pruner.log.add_entry({
-        "kl_loss": loss.mean().item()
-    })
-
-    loss.mean().backward()
+    loss.backward()
     modal_optimizer.step()
 
     if no_batches % -100 == -1:

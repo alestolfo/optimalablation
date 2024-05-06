@@ -26,7 +26,6 @@ folder=f"results/pruning_vertices_auto/{dataset}"
 
 batch_size=50
 pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
-pruning_cfg.lamb = 1
 pruning_cfg.n_samples = 1
 
 task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device)
@@ -37,11 +36,11 @@ for param in model.parameters():
 
 # %%
 mask_sampler = ConstantMaskSampler()
-vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
+vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 vertex_pruner.add_patching_hooks()
 
 # %%
 next_batch = partial(task_ds.next_batch, tokenizer)
-pruning_cfg.record_post_training(mask_sampler, vertex_pruner, ds_test, next_batch, in_format="nodes")
+pruning_cfg.record_post_training(vertex_pruner, ds_test, next_batch, in_format="nodes")
 
 # %%

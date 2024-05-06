@@ -37,14 +37,14 @@ for param in model.parameters():
 
 # %%
 vertex_sampler = ConstantMaskSampler()
-vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), vertex_sampler, inference_mode=True)
+vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), vertex_sampler)
 
 ioi_nodes = get_ioi_nodes()
 vertex_mask = nodes_to_vertex_mask(ioi_nodes)
 vertex_sampler.set_mask(vertex_mask)
 
 edge_sampler = ConstantMaskSampler()
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), edge_sampler, inference_mode=True)
+edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), edge_sampler)
 
 edge_mask = nodes_to_mask(ioi_nodes)
 discrete_mask = discretize_mask(edge_mask, 0.5)

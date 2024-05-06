@@ -116,7 +116,7 @@ def compare_train_curves(folder_1, folder_2):
             train_curve_1.compare_plot("complexity_loss", 50, train_curve_2, f"Training comparison {lamb}", start=500)
 # %%
         
-compare_train_curves("results/pruning_edges_auto/ioi_edges_unif", "results/pruning_edges_auto/ioi_unif_window")
+compare_train_curves("results/pruning_edges_auto/ioi_unif", "results/pruning_edges_auto-5-6/ioi_edges_unif")
 # %%
 # %%
 ax = None

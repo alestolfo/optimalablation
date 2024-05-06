@@ -40,7 +40,7 @@ gpu_requeue = True
 pretrained_folder = None
 # f"pruning_edges_auto/ioi/300.0"
 
-pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, init_param=1)
+pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, init_param=1, use_temp=True)
 pruning_cfg.lamb = reg_lamb
 pruning_cfg.lr_modes = 5e-3
 

@@ -36,7 +36,7 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
 # %%
-args = load_args("pruning_edges_auto", 1.8e-4, {"name": "edges_unifsd"})
+args = load_args("pruning_edges_auto", 1.8e-4, {"name": "edges_unif"})
 folder, reg_lamb, dataset = args["folder"], args["lamb"], args["dataset"]
 node_reg=2e-3
 gpu_requeue = True
@@ -45,9 +45,8 @@ gpu_requeue = True
 pretrained_folder = None
 # f"pruning_edges_auto/ioi/300.0"
 
-pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=0)
+pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, init_param=1)
 pruning_cfg.lamb = reg_lamb
-pruning_cfg.initialize_params_probs(1)
 
 task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device)
 
@@ -116,18 +115,20 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     if plotting:
         take_snapshot("")
-        grad = mask_sampler.sampling_params['attn-attn'][9].grad.flatten()
-        print(grad[grad.nonzero()].shape)
-        sns.scatterplot(x=mask_sampler.sampled_mask['attn-attn'][9].float().mean(dim=0).flatten()[grad.nonzero()].flatten().cpu().detach(),y=grad[grad.nonzero()].flatten().cpu())
-        plt.xlabel("Prob inclusion in batch")
-        plt.ylabel("Autograd")
-        plt.savefig(f"bernoulli/prior/unif_prob_grad_{j}.png")
-        plt.close()
 
-        sns.scatterplot(x=mask_sampler.sampling_params['attn-attn'][9].float().detach().flatten()[grad.nonzero()].flatten().cpu().detach(),y=grad[grad.nonzero()].flatten().cpu())
-        plt.xlabel("Sampling parameter")
-        plt.ylabel("Autograd")
-        plt.savefig(f"bernoulli/prior/unif_param_grad_{j}.png")
+        # bernoulli comparison plot
+        # grad = mask_sampler.sampling_params['attn-attn'][9].grad.flatten()
+        # print(grad[grad.nonzero()].shape)
+        # sns.scatterplot(x=mask_sampler.sampled_mask['attn-attn'][9].float().mean(dim=0).flatten()[grad.nonzero()].flatten().cpu().detach(),y=grad[grad.nonzero()].flatten().cpu())
+        # plt.xlabel("Prob inclusion in batch")
+        # plt.ylabel("Autograd")
+        # plt.savefig(f"bernoulli/prior/unif_prob_grad_{j}.png")
+        # plt.close()
+
+        # sns.scatterplot(x=mask_sampler.sampling_params['attn-attn'][9].float().detach().flatten()[grad.nonzero()].flatten().cpu().detach(),y=grad[grad.nonzero()].flatten().cpu())
+        # plt.xlabel("Sampling parameter")
+        # plt.ylabel("Autograd")
+        # plt.savefig(f"bernoulli/prior/unif_param_grad_{j}.png")
 
         if checkpointing:
             take_snapshot(f"-{no_batches}")

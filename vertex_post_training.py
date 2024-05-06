@@ -27,7 +27,7 @@ args = load_args("pruning_vertices_auto", 1e-3)
 folder, reg_lamb, dataset, tau = args["folder"], args["lamb"], args["dataset"], args["tau"]
 
 batch_size=75
-pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, init_param=0, batch_size=batch_size)
+pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
 pruning_cfg.lamb = reg_lamb
 pruning_cfg.n_samples = 1
 
@@ -38,7 +38,7 @@ for param in model.parameters():
 
 # %%
 mask_sampler = ConstantMaskSampler()
-vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
+vertex_pruner = VertexPruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 vertex_pruner.add_patching_hooks()
 
 if folder.split("/")[-1] == "manual":
@@ -64,12 +64,7 @@ for no_batches in tqdm(range(vertex_pruner.log.t, max_batches)):
 
     batch, last_token_pos = task_ds.next_batch(tokenizer)
     loss = vertex_pruner(batch, last_token_pos, timing=False)
-
-    vertex_pruner.log.add_entry({
-        "kl_loss": loss.mean().item()
-    })
-
-    loss.mean().backward()
+    loss.backward()
     modal_optimizer.step()
 
     if no_batches % -100 == -1:

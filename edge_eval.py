@@ -28,19 +28,12 @@ model.cfg.use_hook_mlp_in = True
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
-# settings
-try:
-    reg_lamb = float(argv[1])
-except:
-    reg_lamb=1e-4
-
 dataset = "ioi"
 folder=f"results/pruning_edges_auto/{dataset}_edges_unif"
 load_edges = False
 
 batch_size=50
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
-pruning_cfg.lamb = reg_lamb
 pruning_cfg.n_samples = 1
 
 task_ds = get_task_ds(dataset, batch_size, device)
@@ -51,13 +44,13 @@ for param in model.parameters():
 
 # %%
 mask_sampler = ConstantMaskSampler()
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, inference_mode=True)
+edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
 # %%
 next_batch = partial(task_ds.next_batch, tokenizer)
-pruning_cfg.record_post_training(mask_sampler, edge_pruner, ds_test, next_batch, load_edges=load_edges)
+pruning_cfg.record_post_training(edge_pruner, ds_test, next_batch, load_edges=load_edges)
 # %%
 
 # %%
