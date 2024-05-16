@@ -20,7 +20,6 @@ class EdgePruner(torch.nn.Module):
                  init_modes,
                  mask_sampler, 
                  parallel_inference=False, 
-                 inference_mode=False, 
                  cache_compressed_attn=True, 
                  ablation_backward=False
                  ):
@@ -36,10 +35,11 @@ class EdgePruner(torch.nn.Module):
         self.attention_cache = []
         self.mlp_cache = []
         self.cache_compressed_attn = cache_compressed_attn
-        self.inference_mode = inference_mode
         self.parallel_inference = parallel_inference
         self.ablation_backward = ablation_backward
+
         self.disable_hooks = False
+        self.disable_pruning_hooks = False
 
         if not self.cache_compressed_attn:
             model.cfg.use_attn_result = True
@@ -106,43 +106,50 @@ class EdgePruner(torch.nn.Module):
         # mlp_cache: (i+1) * [(bsz * n_samples) x seq_pos x d_model]
 
         # mlp_mask: (bsz * n_samples) x 1 (seq_pos) x n_heads (dest) x i x 1 (d_model)
-        mlp_mask = self.mask_sampler.sampled_mask["mlp-attn"][layer_no][:,circ_idx].unsqueeze(1).unsqueeze(-1)
-        
-        out = (mlp_mask * torch.stack(self.mlp_cache, dim=-2).unsqueeze(dim=2)).sum(dim=-2)
-        # print((out-orig_in).square().sum())
+        try:
+            mlp_mask = self.mask_sampler.sampled_mask["mlp-attn"][layer_no][:,circ_idx].unsqueeze(1).unsqueeze(-1)
+            
+            out = (mlp_mask * torch.stack(self.mlp_cache, dim=-2).unsqueeze(dim=2)).sum(dim=-2)
+            # print((out-orig_in).square().sum())
 
-        if not self.ablation_backward:
-            out = out + (
-                (mlp_mask < 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1]
-                + (mlp_mask >= 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1].detach()
-            ).sum(dim=-2)
+            if not self.ablation_backward:
+                out = out + (
+                    (mlp_mask < 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1]
+                    + (mlp_mask >= 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1].detach()
+                ).sum(dim=-2)
 
-        if layer_no == 0:
-            return prepend_orig(out)
-        
-        # print(len(self.mask_sampler.sampled_mask["attn-attn"]))
-        # print(layer_no)
-        # print((self.mask_sampler.sampled_mask["attn-attn"][layer_no].shape))
+            if layer_no == 0:
+                return prepend_orig(out)
+            
+            # print(len(self.mask_sampler.sampled_mask["attn-attn"]))
+            # print(layer_no)
+            # print((self.mask_sampler.sampled_mask["attn-attn"][layer_no].shape))
 
-        # (bsz * n_samples) x 1 (seq_pos) x n_heads (dest) x i x n_heads (source) x 1 (d_model/d_head)
-        attn_mask = self.mask_sampler.sampled_mask["attn-attn"][layer_no][:,circ_idx].unsqueeze(1).unsqueeze(-1)
-        attn_term = attn_mask * torch.stack(self.attention_cache, dim=-3).unsqueeze(dim=2) + (
-            (attn_mask < 0.001) * (1-attn_mask) * self.modal_attention[:layer_no]
-            + (attn_mask >= 0.001) * (1-attn_mask) * self.modal_attention[:layer_no].detach()
-        )
+            # (bsz * n_samples) x 1 (seq_pos) x n_heads (dest) x i x n_heads (source) x 1 (d_model/d_head)
+            attn_mask = self.mask_sampler.sampled_mask["attn-attn"][layer_no][:,circ_idx].unsqueeze(1).unsqueeze(-1)
+            attn_term = attn_mask * torch.stack(self.attention_cache, dim=-3).unsqueeze(dim=2) + (
+                (attn_mask < 0.001) * (1-attn_mask) * self.modal_attention[:layer_no]
+                + (attn_mask >= 0.001) * (1-attn_mask) * self.modal_attention[:layer_no].detach()
+            )
 
-        # W_O: source_head x d_head x d_model
-        if self.cache_compressed_attn:
-            attn_term = einsum(
-                        "batch pos dest_head prev_layer source_head d_head, \
-                            prev_layer source_head d_head d_model -> \
-                            batch pos dest_head d_model",
-                        attn_term,
-                        self.W_O[:layer_no]
-                )
-        else:
-            attn_term = attn_term.sum(dim=[-3,-2])
-        out = out + attn_term + self.post_bias[:layer_no].sum(dim=0)
+            # W_O: source_head x d_head x d_model
+            if self.cache_compressed_attn:
+                attn_term = einsum(
+                            "batch pos dest_head prev_layer source_head d_head, \
+                                prev_layer source_head d_head d_model -> \
+                                batch pos dest_head d_model",
+                            attn_term,
+                            self.W_O[:layer_no]
+                    )
+            else:
+                attn_term = attn_term.sum(dim=[-3,-2])
+            out = out + attn_term + self.post_bias[:layer_no].sum(dim=0)
+        except Exception as e:
+            print(self.mask_sampler.sampled_mask['mlp-attn'])
+            print(orig_in.shape)
+            print(mlp_mask.shape)
+            print(attn_mask.shape)
+            raise e
 
         if self.ablation_backward:
             # IS THIS WHY ITERATIVE DIDN'T WORK? opt point isn't weighted by (1-x)
@@ -160,7 +167,7 @@ class EdgePruner(torch.nn.Module):
     # attention_cache: contains all attentions stored thus far, list of attention outputs by later
     # mlp_cache: list of mlp outputs by layer
     def pruning_edge_mlp_hook_all_tokens(self, layer_no, orig_in, hook): 
-        if self.disable_hooks:
+        if self.disable_hooks or self.disable_pruning_hooks:
             return orig_in
             
         def prepend_orig(out):
@@ -181,40 +188,46 @@ class EdgePruner(torch.nn.Module):
         # mlp_cache: (i+1) * [(bsz * n_samples) x seq_pos x d_model]
 
         # (bsz * n_samples) x 1 (seq_pos) x i x 1 (d_model)
-        n_layers = self.base_model.cfg.n_layers
-        attn_layers_before = min(layer_no+1,n_layers)
-        mlp_mask = self.mask_sampler.sampled_mask["mlp-mlp"][layer_no].unsqueeze(1).unsqueeze(-1)
+        try:
+            n_layers = self.base_model.cfg.n_layers
+            attn_layers_before = min(layer_no+1,n_layers)
+            mlp_mask = self.mask_sampler.sampled_mask["mlp-mlp"][layer_no].unsqueeze(1).unsqueeze(-1)
 
-        out = (mlp_mask * torch.stack(self.mlp_cache, dim=2)).sum(dim=2)
+            out = (mlp_mask * torch.stack(self.mlp_cache, dim=2)).sum(dim=2)
 
-        if not self.ablation_backward:
-            out = out + (
-                (mlp_mask < 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1]
-                + (mlp_mask >= 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1].detach()
-            ).sum(dim=2)
+            if not self.ablation_backward:
+                out = out + (
+                    (mlp_mask < 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1]
+                    + (mlp_mask >= 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1].detach()
+                ).sum(dim=2)
 
-        # print((out - mlp_cache[0]).square().sum())
-        
-        # (bsz * n_samples) x 1 (seq_pos) x i x n_heads x 1 (d_model)
-        attn_mask = self.mask_sampler.sampled_mask["attn-mlp"][layer_no].unsqueeze(1).unsqueeze(-1)
-        attn_term = attn_mask * torch.stack(self.attention_cache, dim=-3) + (
-            (attn_mask < 0.001) * (1-attn_mask) * self.modal_attention[:attn_layers_before]
-            + (attn_mask >= 0.001) * (1-attn_mask) * self.modal_attention[:attn_layers_before].detach()
-        )
+            # print((out - mlp_cache[0]).square().sum())
+            
+            # (bsz * n_samples) x 1 (seq_pos) x i x n_heads x 1 (d_model)
+            attn_mask = self.mask_sampler.sampled_mask["attn-mlp"][layer_no].unsqueeze(1).unsqueeze(-1)
+            attn_term = attn_mask * torch.stack(self.attention_cache, dim=-3) + (
+                (attn_mask < 0.001) * (1-attn_mask) * self.modal_attention[:attn_layers_before]
+                + (attn_mask >= 0.001) * (1-attn_mask) * self.modal_attention[:attn_layers_before].detach()
+            )
 
-        # W_O: source_head x d_head x d_model
-        if self.cache_compressed_attn:
-            attn_term = einsum(
-                        "batch pos prev_layer source_head d_head, \
-                            prev_layer source_head d_head d_model -> \
-                            batch pos d_model",
-                        attn_term,
-                        self.W_O[:attn_layers_before]
-                )
-        else:
-            attn_term = attn_term.sum(dim=[-3,-2])
+            # W_O: source_head x d_head x d_model
+            if self.cache_compressed_attn:
+                attn_term = einsum(
+                            "batch pos prev_layer source_head d_head, \
+                                prev_layer source_head d_head d_model -> \
+                                batch pos d_model",
+                            attn_term,
+                            self.W_O[:attn_layers_before]
+                    )
+            else:
+                attn_term = attn_term.sum(dim=[-3,-2])
 
-        out = out + attn_term + self.post_bias[:attn_layers_before].sum(dim=0)
+            out = out + attn_term + self.post_bias[:attn_layers_before].sum(dim=0)
+        except Exception as e:
+            print(orig_in.shape)
+            print(attn_mask.shape)
+            print(mlp_mask.shape)
+            raise e
 
         if self.ablation_backward:
             return prepend_orig(out + self.modal_mlp[layer_no])
@@ -223,9 +236,10 @@ class EdgePruner(torch.nn.Module):
 
     def pruning_edge_final_hook_all_tokens(self, orig_in, hook):
         out = self.pruning_edge_mlp_hook_all_tokens(self.base_model.cfg.n_layers, orig_in, hook)
-        if (self.inference_mode and not self.parallel_inference) or self.disable_hooks:
+        if self.disable_hooks:
             out = out.unsqueeze(0)
         else:
+            # CONVENTION: since we repeat the batch tokens n_samples times, the correct unflattened shape for embeddings is [n_samples, batch_size, seq, d_model]
             out = out.unflatten(0, (-1, self.pruning_cfg.batch_size))
         out = (out * self.last_token_mask.unsqueeze(-1)).sum(dim=2)
         return out
@@ -331,22 +345,35 @@ class EdgePruner(torch.nn.Module):
 
     def get_modes(self):
         return torch.cat([self.modal_attention.flatten(start_dim=1,end_dim=2), self.modal_mlp], dim=0)
-                        
-    def forward(self, batch, last_token_pos, graph_suffix=None, return_output=False, timing=True, separate_loss=False):
-        if timing:
-            end = []
-            for x in range(6):
-                end.append(torch.cuda.Event(enable_timing=True))
-            end[0].record()
 
+    def setup_inference(self, batch, last_token_pos):
         self.attention_cache.clear()
         self.mlp_cache.clear()
 
         with torch.no_grad():
             last_token_mask = torch.zeros_like(batch).to(self.pruning_cfg.device)
             last_token_mask[torch.arange(last_token_mask.shape[0]), last_token_pos] = 1
-        
         self.last_token_mask = last_token_mask
+
+    def run_cache(self, batch, last_token_pos):
+        self.setup_inference(batch, last_token_pos)
+
+        self.disable_pruning_hooks = True
+        self.base_model(batch)
+        self.disable_pruning_hooks = False
+
+    # graph_suffix: current time, pass if we want to plot a histogram of KL loss, mask params
+    # return output: just return the model output
+    # separate loss: separate KL and mask loss
+    def forward(self, batch, last_token_pos, graph_suffix=None, return_output=False, timing=True, print_loss=True, separate_loss=False):
+        if timing:
+            end = []
+            for x in range(6):
+                end.append(torch.cuda.Event(enable_timing=True))
+            end[0].record()
+        
+        self.setup_inference(batch, last_token_pos)
+
         n_samples = self.pruning_cfg.n_samples
         
         if self.mask_sampler.use_temperature:
@@ -356,6 +383,7 @@ class EdgePruner(torch.nn.Module):
         if timing:
             end[1].record()
         
+        # CONVENTION: since we repeat the batch tokens n_samples times, the correct unflattened shape for embeddings is [n_samples, batch_size, seq, d_model]
         pruned_output = self.base_model(
             batch.repeat(n_samples+(1 if self.parallel_inference else 0),1)
         ).log_softmax(dim=-1)
@@ -386,11 +414,6 @@ class EdgePruner(torch.nn.Module):
                 print("Cuda time", end[i-1].elapsed_time(end[i]))
 
         kl_losses = kl_loss(pruned_output, orig_output.exp()).sum(dim=-1)
-
-        if self.inference_mode:
-            return kl_losses
-
-
         loss = kl_losses.mean() + mask_loss
 
         with torch.no_grad():
@@ -409,9 +432,10 @@ class EdgePruner(torch.nn.Module):
 
                 self.mask_sampler.record_state(j)
 
-            print("KL:", kl_losses.mean().item())
+            if print_loss:
+                print("KL:", kl_losses.mean().item())
         
         if separate_loss:
-            return kl_losses.flatten(start_dim=0, end_dim=1), mask_loss
+            return kl_losses, mask_loss
         else:
             return loss
