@@ -1,0 +1,55 @@
+
+https://lre.baulab.info/data/bias/
+[   ]characteristic_gender.json	9 months ago	3.1K	 
+[   ]degree_gender.json	9 months ago	3.8K	 
+[   ]name_birthplace.json	9 months ago	3.0K	 
+[   ]name_gender.json	9 months ago	2.0K	 
+[   ]name_religion.json	9 months ago	3.1K	 
+[   ]occupation_age.json	9 months ago	4.3K	 
+[   ]occupation_gender.json	9 months ago	2.1K	 
+[   ]person_native_language.json    9 months ago	85K	
+
+https://lre.baulab.info/data/commonsense/
+[   ]fruit_inside_color.json	9 months ago	3.4K	 
+[   ]fruit_outside_color.json	9 months ago	2.9K	 
+[   ]object_superclass.json	9 months ago	6.8K	 
+[   ]substance_phase.json	9 months ago	4.6K	 
+[   ]task_done_by_person.json	9 months ago	3.6K	 
+[   ]task_done_by_tool.json	9 months ago	5.1K	 
+[   ]word_sentiment.json	9 months ago	5.6K	 
+[   ]work_location.json	9 months ago	3.7K	 
+
+https://lre.baulab.info/data/factual/
+[   ]city_in_country.json	9 months ago	2.7K	 
+[   ]company_ceo.json	9 months ago	30K	 
+[   ]company_hq.json	9 months ago	65K	 
+[   ]country_capital_city.json	9 months ago	2.5K	 
+[   ]country_currency.json	9 months ago	2.8K	 
+[   ]country_language.json	9 months ago	2.5K	 
+[   ]country_largest_city.json	9 months ago	2.3K	 
+[   ]food_from_country.json	9 months ago	2.8K	 
+[   ]landmark_in_country.json	9 months ago	77K	 
+[   ]landmark_on_continent.json	9 months ago	89K	 
+[   ]person_band_lead_singer.json	9 months ago	2.4K	 
+[   ]person_father.json	9 months ago	104K	 
+[   ]person_mother.json	9 months ago	104K	 
+[   ]person_occupation.json	9 months ago	60K	 
+[   ]person_plays_instrument.json	9 months ago	36K	 
+[   ]person_plays_position_in_sport.json	9 months ago	90K	 
+[   ]person_plays_pro_sport.json	9 months ago	23K	 
+[   ]person_university.json	9 months ago	9.6K	 
+[   ]pokemon_evolutions.json	9 months ago	3.8K	 
+[   ]presidents_birth_year.json	9 months ago	1.6K	 
+[   ]presidents_election_year.json	9 months ago	1.6K	 
+[   ]product_by_company.json	9 months ago	47K	 
+[   ]star_constellation.json	9 months ago	29K	 
+[   ]superhero_archnemesis.json	9 months ago	9.1K	 
+[   ]superhero_person.json	9 months ago	9.5K	 
+
+https://lre.baulab.info/data/linguistic/
+[   ]adj_antonym.json	9 months ago	8.5K	 
+[   ]adj_comparative.json	9 months ago	6.0K	 
+[   ]adj_superlative.json	9 months ago	7.1K	 
+[   ]verb_past_tense.json	9 months ago	6.5K	 
+[   ]word_first_letter.json	9 months ago	19K	 
+[   ]word_last_letter.json	9 months ago	19K	 
