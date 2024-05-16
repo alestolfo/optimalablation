@@ -14,13 +14,15 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
 from utils.training_utils import tuned_lens_hook, load_model_data, save_hook_last_token, LinePlot
-from utils.lens_utils import apply_lens, apply_modal_lens
+from utils.lens_utils import LensExperiment
 # %%
 
 sns.set()
-folder="results/modal_lens/linear_oca"
-modal_lens_folder="results/modal_lens/random_init"
-tuned_lens_folder = "results/tuned_lens"
+
+folders = {
+    "modal": "results/lens/oa",
+}
+folder="results/lens/linear_oa"
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"
 model_name = "gpt2-small"
@@ -44,7 +46,7 @@ resid_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_re
 
 lens_weights = [torch.nn.Parameter(torch.randn(d_model, d_model).to(device)) for _ in range(n_layers)]
 lens_bias = [torch.nn.Parameter(torch.randn(d_model,).to(device)) for _ in range(n_layers)]
-lens_optimizer = torch.optim.AdamW([*lens_weights, *lens_bias], lr=lr, weight_decay=1e-3)
+lens_optimizer = torch.optim.AdamW([*lens_weights, *lens_bias], lr=lr, weight_decay=0)
 
 # lens_optimizer = torch.optim.AdamW(attn_bias, lr=lr, weight_decay=0)
 # lens_scheduler = torch.optim.lr_scheduler.StepLR(lens_optimizer, step_size=200, gamma=0.9)
@@ -58,14 +60,11 @@ for p in lens_weights:
 for p in lens_bias:
     p.register_hook(lambda grad: torch.nan_to_num(grad, nan=0, posinf=0, neginf=0))
 
-# %%
-# with open(f"{tuned_lens_folder}/lens_weights.pkl", "rb") as f:
-#     tuned_lens_weights = pickle.load(f)
-# with open(f"{tuned_lens_folder}/lens_bias.pkl", "rb") as f:
-#     tuned_lens_bias = pickle.load(f)
-with open(f"{modal_lens_folder}/lens_weights.pkl", "rb") as f:
-    attn_bias = pickle.load(f)
+exp = LensExperiment(model, owt_iter, folders, device, pretrained=False)
+exp.all_lens_weights['linear_oa'] = lens_weights
+exp.all_lens_bias['linear_oa'] = lens_bias
 
+# %%
 def get_oca_linear_lens_loss(batch):
     activation_storage = []
 
@@ -78,8 +77,8 @@ def get_oca_linear_lens_loss(batch):
                 ]
     )[:,-1].softmax(dim=-1).unsqueeze(1)
 
-    linear_lens_probs = apply_lens(model, lens_weights, lens_bias, activation_storage)
-    modal_lens_probs = apply_modal_lens(model, attn_bias, activation_storage)
+    linear_lens_probs = exp.apply_lens('linear_oa', activation_storage)
+    modal_lens_probs = exp.apply_modal_lens(activation_storage)
 
     kl_losses = kl_loss(linear_lens_probs.log(), modal_lens_probs).sum(dim=-1)
 
@@ -90,11 +89,11 @@ def get_oca_linear_lens_loss(batch):
 
 # %%
 # modal lens train
-modal_loss_series = [f"modal_loss_{k}" for k in range(n_layers)]
+# modal_loss_series = [f"modal_loss_{k}" for k in range(n_layers)]
 linear_loss_series = [f"linear_loss_{k}" for k in range(n_layers)]
 lm_loss_series = [f"lm_loss_{k}" for k in range(n_layers)]
 
-lp = LinePlot([*lm_loss_series, *modal_loss_series, *linear_loss_series, 'step_size'])
+lp = LinePlot([*lm_loss_series, *linear_loss_series, 'step_size'])
     
 for i in tqdm(range(50000)):
     batch = next(owt_iter)['tokens']
@@ -116,20 +115,20 @@ for i in tqdm(range(50000)):
     lp.add_entry({
         "step_size": step_sz.item(), 
         **{f"lm_loss_{k}": kl_losses[k].item() for k in range(n_layers)},
-        **{f"modal_loss_{k}": modal_lens_losses[k].item() for k in range(n_layers)},
+        # **{f"modal_loss_{k}": modal_lens_losses[k].item() for k in range(n_layers)},
         **{f"linear_loss_{k}": linear_lens_losses[k].item() for k in range(n_layers)},
     })
 
     if math.isnan(lp.stat_book["step_size"][-1]):
         break
 
-    if i % -50 == -1:
-        lp.plot(series=lm_loss_series, subplots=3, save=f"{folder}/train_modal.png", twinx=False, mv=20)
+    if i % -500 == -1:
+        lp.plot(series=lm_loss_series, subplots=3, save=f"{folder}/train_oa_loss.png", twinx=False, mv=20)
         # lp.plot(series=modal_loss_series, subplots=3, save=f"{folder}/train_modal.png", twinx=False, mv=20)
-        lp.plot(series=linear_loss_series, subplots=3, save=f"{folder}/train_linear.png", twinx=False, mv=20)
-        with open(f"{folder}/linear_lens_weights.pkl", "wb") as f:
+        lp.plot(series=linear_loss_series, subplots=3, save=f"{folder}/train_model_loss.png", twinx=False, mv=20)
+        with open(f"{folder}/lens_weights.pkl", "wb") as f:
             pickle.dump(lens_weights, f)
-        with open(f"{folder}/linear_lens_bias.pkl", "wb") as f:
+        with open(f"{folder}/lens_bias.pkl", "wb") as f:
             pickle.dump(lens_bias, f)
 
 # %%

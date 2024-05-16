@@ -23,7 +23,7 @@ from utils.training_utils import LinePlot
 # %%
 
 class InferenceConfig:
-    def __init__(self, device, folder, cfg):
+    def __init__(self, device, folder, cfg, constant_prune_mask=None):
         self.device = device
         self.n_layers = cfg.n_layers
         self.n_heads = cfg.n_heads
@@ -51,39 +51,25 @@ class InferenceConfig:
         self.temp_c = 0
 
         self.temp_momentum = 0
-    
-    def initialize_params(self, init_param, init_scale):
-        if init_scale is None:
-            self.init_params = {
-                k: [
-                    torch.stack(
-                        [mask_tensor.squeeze(0).to(self.device) * init_param, 
-                        torch.ones(mask_tensor.shape[1:]).to(self.device) * self.starting_beta], 
-                    dim=-1)
-                    for mask_tensor in self.constant_prune_mask[k]
-                ]
-                for k in self.constant_prune_mask
-            }
-        else:
-            self.init_params = {
-                k: [
-                    torch.stack(
-                        [torch.randn(mask_tensor.shape[1:]) * init_scale + init_param, 
-                        torch.ones(mask_tensor.shape[1:]) * self.starting_beta], 
-                    dim=-1).to(self.device)
-                    for mask_tensor in self.constant_prune_mask[k]
-                ]
-                for k in self.constant_prune_mask
-            }
 
-    def initialize_params_probs(self, init_param):
-        self.init_params = {
-            k: [
-                mask_tensor.squeeze(0).to(self.device).unsqueeze(-1) * init_param
-                for mask_tensor in self.constant_prune_mask[k]
-            ]
-            for k in self.constant_prune_mask
-        }
+        self.constant_prune_mask = constant_prune_mask
+    
+    def initialize_params(self, init_param, init_scale=None, use_temp=False):
+        self.init_params = {}
+        for k in self.constant_prune_mask:
+            self.init_params[k] = []
+
+            for mask_tensor in self.constant_prune_mask[k]:
+                if init_scale is None:
+                    param = mask_tensor.squeeze(0).unsqueeze(-1) * init_param 
+                else:
+                    param = torch.randn(mask_tensor.shape[1:]).unsqueeze(-1) * init_scale
+                
+                # two parameters per component
+                if use_temp:
+                    param = torch.cat([param, torch.ones(mask_tensor.shape[1:]).unsqueeze(-1) * self.starting_beta], dim=-1)
+
+                self.init_params[k].append(param.to(self.device))
 
     def reset_temp(self):
         self.temp_c = 0
@@ -183,7 +169,7 @@ class InferenceConfig:
         
         return LinePlot(['step_size', 'mode_step_size', 'max_grad_norm'])
     
-    def record_post_training(self, mask_sampler, component_pruner, ds_test, next_batch, in_format="edges", out_format="edges", load_edges=False):
+    def record_post_training(self, component_pruner, ds_test, next_batch, in_format="edges", out_format="edges", load_edges=False):
         log = {"lamb": [], "tau": [], "losses": []}
         if out_format == "edges":
             log["edges"] = []
@@ -211,6 +197,9 @@ class InferenceConfig:
                     continue
                 prune_mask = retrieve_mask(lamb_path)
 
+                if prune_mask is None:
+                    continue
+
             files = glob.glob(f"{lamb_path}/fit_modes_*.pth")
             for tau_path in files:
                 tau = tau_path.split("/")[-1].replace("fit_modes_", "").replace(".pth", "")
@@ -230,17 +219,17 @@ class InferenceConfig:
                     _, edges = mask_to_edges(nodes_to_mask(vertices, all_mlps=False))
                     clipped_edges = edges
 
-                mask_sampler.set_mask(discrete_mask)
-
+                component_pruner.mask_sampler.set_mask(discrete_mask)
                 component_pruner.load_state_dict(torch.load(tau_path), strict=False)
 
                 ds_iter = iter(ds_test)
                 kl_losses = []
 
+                # print(component_pruner.mask_sampler.sampled_mask)
                 for i in tqdm(range(20)):
                     batch, last_token_pos = next_batch(next(ds_iter))
                     with torch.no_grad():
-                        loss = component_pruner(batch, last_token_pos, timing=False)
+                        loss = component_pruner(batch, last_token_pos, timing=False, print_loss=False)
                     kl_losses.append(loss.mean().item())
                 avg_loss = np.mean(kl_losses)
                 log["lamb"].append(lamb)
@@ -259,25 +248,27 @@ class InferenceConfig:
 # %%
     
 class EdgeInferenceConfig(InferenceConfig):
-    def __init__(self, cfg, device, folder, batch_size=None, init_param=-0.5, init_scale=None, prior=None, prior_scale=0):
-        super().__init__(device, folder, cfg)
+    def __init__(self, cfg, device, folder, 
+                 batch_size=None, init_param=-0.5, init_scale=None, use_temp=False):
+        super().__init__(device, folder, cfg, edge_prune_mask)
 
-        if batch_size is not None:
-            self.batch_size = batch_size
-        else:
+        if batch_size is None:
             self.batch_size = 5
+        else:
+            self.batch_size = batch_size
 
         self.n_samples = 12
-        self.constant_prune_mask = edge_prune_mask
 
-        self.lr = 1e-1
+        # used original LR (1e-1) for scale var, new LR (5e-2) for other three scale invariants.
+        self.lr = 5e-2
         self.lr_modes = 1e-3
 
-        self.initialize_params(init_param, init_scale)
+        self.initialize_params(init_param, init_scale, use_temp=use_temp)
 
 class VertexInferenceConfig(InferenceConfig):
-    def __init__(self, cfg, device, folder, batch_size=None, init_param=-0.5, init_scale=None):
-        super().__init__(device, folder, cfg)
+    def __init__(self, cfg, device, folder, 
+                 batch_size=None, init_param=-0.5, init_scale=None, use_temp=False):
+        super().__init__(device, folder, cfg, vertex_prune_mask)
         
         if batch_size is None:
             self.batch_size = 10
@@ -285,9 +276,11 @@ class VertexInferenceConfig(InferenceConfig):
             self.batch_size = batch_size
 
         self.n_samples = 25
-        self.constant_prune_mask = vertex_prune_mask
 
         self.lr = 1e-2
         self.lr_modes = 1e-3
+        
+        self.initialize_params(init_param, init_scale, use_temp=use_temp)
 
-        self.initialize_params(init_param, init_scale)
+# %%
+

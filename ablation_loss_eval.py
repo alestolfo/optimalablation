@@ -71,7 +71,7 @@ for ds in dataset_list:
     node_list = {'attn': attn_nodes.squeeze(0).nonzero().tolist(), 'mlp': mlp_nodes.nonzero().flatten().tolist()}
 
     idx_dict = {}
-
+ 
     
     for layer_no, head_no in node_list['attn']:
         idx_dict[layer_no * n_heads + head_no] = (attn_nodes[0, layer_no, head_no].item(), edges_per_node['attn'])
@@ -82,16 +82,26 @@ for ds in dataset_list:
     for ablation_type in ablation_types:
         true_positives = [0]
         false_positives = [0]
+        roc = 0
 
         for node_idx in ablation_data[ds][ablation_type]['head_losses'].argsort(dim=0, descending=True).flatten().tolist():
+            # only give credit for finding attention heads
+            # if node_idx >= n_layers * n_heads:
+            #     continue
+
             if node_idx in idx_dict:
-                # prop = idx_dict[node_idx][0] / idx_dict[node_idx][1]
-                prop = 1
+                prop = idx_dict[node_idx][0] / idx_dict[node_idx][1]
+                # prop = 1
                 true_positives.append(true_positives[-1] + prop)
                 false_positives.append(false_positives[-1] + 1 - prop)
             else:
                 true_positives.append(true_positives[-1])
                 false_positives.append(false_positives[-1] + 1)
+
+            roc += (true_positives[-1] + true_positives[-2]) * (false_positives[-1] - false_positives[-2]) / 2
+        
+        roc = round(roc / (true_positives[-1] * false_positives[-1]), 3)
+        print(f"Ablation type {ablation_type} roc {roc}")
         
         sns.lineplot(x=false_positives, y=true_positives, label=ablation_type, estimator=None)
     plt.savefig(f"{folder}/{ds}_roc_nodes.png")

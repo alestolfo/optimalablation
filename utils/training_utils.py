@@ -22,10 +22,11 @@ default_args = {
     "dataset": "ioi",
     "subfolder": None,
     "priorscale": None,
-    "priorlamb": None
+    "priorlamb": None,
+    "desc": None
 }
 
-def load_args(run_type, default_lamb, defaults={}):
+def load_args(run_type, default_lamb=None, defaults={}):
     my_args = {**default_args, **defaults, "lamb": default_lamb}
     try:
         parser = argparse.ArgumentParser()
@@ -43,6 +44,8 @@ def load_args(run_type, default_lamb, defaults={}):
                             help='run name, e.g. edges or vertex prior')
         parser.add_argument('-t', '--tau',
                             help='threshold to use for post training')
+        parser.add_argument('-e', '--desc',
+                            help='description, extra parameter to pass')
 
         args = parser.parse_args()
         args = vars(args)
@@ -50,6 +53,9 @@ def load_args(run_type, default_lamb, defaults={}):
         for k in args:
             my_args[k] = args[k]
             if k in {"lamb", "priorscale", "priorlamb", "tau"} and my_args[k] is not None:
+                # exception for manual circuit
+                if my_args[k] == "manual":
+                    continue
                 my_args[k] = float(my_args[k])
     except Exception as e:
         print(e)
@@ -67,6 +73,8 @@ def load_args(run_type, default_lamb, defaults={}):
         folder=f"{parent}/{run_type}/{run_folder}/{my_args['subfolder']}"
     elif my_args["priorlamb"] is not None:
         folder=f"{parent}/{run_type}/{run_folder}/{my_args['lamb']}-{my_args['priorlamb']}-{my_args['priorscale']}"
+    elif my_args["lamb"] is None:
+        folder=f"{parent}/{run_type}/{run_folder}"
     else:
         folder=f"{parent}/{run_type}/{run_folder}/{my_args['lamb']}"
 
@@ -96,8 +104,13 @@ def load_model_data(model_name, batch_size=8, ctx_length=25, repeats=True, ds_na
 
 # %%
 
+resid_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_resid_pre"
+
 def save_hook_last_token(save_to, act, hook):
     save_to.append(act[:,-1,:])
+
+def save_hook_all_tokens(save_to, act, hook):
+    save_to.append(act)
 
 def ablation_hook_last_token(batch_feature_idx, repl, act, hook):
     # print(act.shape, hook.name)
@@ -183,16 +196,17 @@ def tuned_lens_hook(activation_storage, tuned_lens_weights, tuned_lens_bias, act
 # 
 def update_means_variances(prev_means, prev_vars, batch_results, no_batches):
     # computing variance iteratively using a trick
-    prev_vars = prev_vars * (batch_results.shape[-1] * no_batches - 1)
-    vars = prev_vars + (batch_results - prev_means).square().sum(dim=-1, keepdim=True) - (batch_results.mean(dim=-1, keepdim=True) - prev_means).square()
-
-    no_batches = no_batches + 1
-
-    if batch_results.shape[-1] * no_batches > 1:
-        vars = vars / (batch_results.shape[-1] * no_batches - 1)
+    old_samples = batch_results.shape[-1] * no_batches
+    new_samples = batch_results.shape[-1] * (no_batches + 1)
 
     means = (no_batches * prev_means + batch_results.mean(dim=-1, keepdim=True)) / (no_batches + 1)
 
+    prev_vars = prev_vars * (old_samples - 1)
+
+    vars = prev_vars + (batch_results - prev_means).square().sum(dim=-1, keepdim=True) - new_samples * (means - prev_means).square()
+    
+    if new_samples > 1:
+        vars = vars / (new_samples - 1)
     return means, vars
 
 # rec = number of items to record
@@ -227,7 +241,7 @@ def update_means_variances_mixed(prev_means, prev_vars, batch_results, n_batches
     # print(new_batches_by_head)
     # print(vars)
 
-    print((batch_samples_by_head * (batch_results - prev_means).square()).sum(dim=-1, keepdim=True) - new_samples_by_head * (means - prev_means).square())
+    # print((batch_samples_by_head * (batch_results - prev_means).square()).sum(dim=-1, keepdim=True) - new_samples_by_head * (means - prev_means).square())
 
     vars = torch.where(
         new_batches_by_head > 1,
@@ -241,27 +255,61 @@ def update_means_variances_mixed(prev_means, prev_vars, batch_results, n_batches
 
 # only accepts a single batch at a time
 # n_batches_by_head should be initialized to 0
-def update_means_variances_exponential(prev_means, prev_vars, batch_results, n_batches_by_head, n_samples_by_head, batch_samples_by_head, alpha=0.9):
+
+# rec = number of items to record
+# prev_means: rec x 1
+# prev_vars: rec x 1
+# batch_results: rec x 1. Assumed to be mean, not sum.
+# n_batches_by_head: rec x 1 (previous no. batches)
+# n_samples_by_head: rec x 1 (previous no. samples)
+# batch_samples_by_head: rec x 1
+def update_means_variances_exponential(prev_means, prev_vars, batch_results, n_batches_by_head, n_samples_by_head, batch_samples_by_head, total_num_batches, alpha=0.95):
+
+    # Avg samples per batch, including instances of zero samples
     new_samples_by_head = alpha * n_samples_by_head + (1-alpha) * batch_samples_by_head
+
+    # divide by probability mass represented by 0s
+    avg_samples_by_head = new_samples_by_head / (1 - math.exp(math.log(alpha) * (total_num_batches + 1)))
+
     new_w = torch.where(
-        new_samples_by_head > 0,
-        (math.log(alpha) * batch_samples_by_head / new_samples_by_head).exp(),
-        0
+        n_samples_by_head > 0,
+        
+        # then cap how much you update on any one batch
+        (math.log(alpha) * (batch_samples_by_head / avg_samples_by_head).clip(max=2)).exp(),
+        alpha
     )
-    
-    # total mass of exponential-weighted sequence. If new_batches_by_head=0, then it should be 1.
+
+    # total mass of exponential-weighted sequence. If new_samples_by_head=0, then it should be 1.
     new_batches_by_head = 1 - (1 - n_batches_by_head) * new_w
 
-    prev_means = prev_means * n_batches_by_head
-    means = new_w * prev_means + (1-new_w) * batch_results
+    # undo division
+    means = prev_means * n_batches_by_head
+    means = new_w * means + (1-new_w) * batch_results
+    # print(new_w[:3])
+    # print(((1-new_w) * batch_results)[:3])
 
+
+    # undo division
     prev_vars = prev_vars * n_batches_by_head
-    vars = new_w * prev_vars + (1-new_w) * (batch_results - prev_means).square() - (means - prev_means).square()
     vars = torch.where(
-        vars < 0,
+        n_batches_by_head == 0,
         0,
-        vars
+        new_w * prev_vars + (1-new_w) * batch_samples_by_head * (batch_results - prev_means).square()
     )
+
+    # prev_vars = prev_vars * n_batches_by_head
+    # vars = new_w * prev_vars + (1-new_w) * (batch_results - prev_means).square() - (means - prev_means).square()
+    # print(vars)
+    # print(new_batches_by_head.mean())
+    # vars = torch.where(
+    #     vars < 0,
+    #     0,
+    #     vars
+    # )
+    # print("Previous mean", prev_means[144])
+    # print(vars[144])
+    # print(means[144])
+    # print(((1-new_w) * batch_samples_by_head * (batch_results - prev_means).square())[144])
 
     means = torch.where(
         new_batches_by_head > 0,
@@ -278,6 +326,43 @@ def update_means_variances_exponential(prev_means, prev_vars, batch_results, n_b
 
 # %%
 
+def plot_no_outliers(plot_fn, alpha, x, y, ax=None, xy_line=False, args={}):
+    if isinstance(x, torch.Tensor):
+        x = torch.nan_to_num(x, nan=0, posinf=0, neginf=0).detach().cpu().flatten()
+    
+    if isinstance(y, torch.Tensor):
+        y = torch.nan_to_num(y, nan=0, posinf=0, neginf=0).detach().cpu().flatten()
+
+    plot_args = {"x": x, "y": y, "ax": ax}
+    if "s" in args:
+        plot_args["s"] = args["s"]
+    cur_ax = plot_fn(**plot_args)
+    if alpha > 0:
+        cur_ax.set_xlim(x.quantile(alpha), x.quantile(1-alpha))
+        cur_ax.set_ylim(y.quantile(alpha), y.quantile(1-alpha))
+
+    if xy_line:
+        min_val = max(cur_ax.get_xlim()[0],cur_ax.get_ylim()[0])
+        max_val = min(cur_ax.get_xlim()[1],cur_ax.get_ylim()[1])
+        cur_ax.plot([min_val, max_val],[min_val, max_val], color="red", linestyle="-")
+    
+    corr = 0
+    if "x" in args:
+        cur_ax.set_xlabel(args["x"])
+    if "y" in args:
+        cur_ax.set_ylabel(args["y"])
+    if "title" in args:
+        cur_ax.set_title(args["title"])
+    if "corr" in args:
+        corr = round(np.corrcoef(x,y)[0,1],3)
+        ax.text(.05, .8, f"r={corr}", transform=cur_ax.transAxes)
+    if "f" in args:
+        plt.savefig(args["f"])
+        plt.close()
+    return corr
+
+
+# %%
 # Unit test for update means variances mixed
 # true_means = (torch.randn((100,1)) * 50).to(device)
 # true_vars = (torch.randn((100,1)).abs() * 50).to(device)
@@ -352,7 +437,7 @@ class LinePlot:
     
     def compare_plot(self, series, mv, compare_log, title="", start=100):
         max_t = min(self.t, compare_log.t)
-        sns.lineplot(self.mv_avg(series, mv=mv)[start:], label="control")
+        sns.lineplot(self.mv_avg(series, mv=mv)[start:], label="control (first arg)")
         sns.lineplot(compare_log.mv_avg(series, mv=mv)[start:], label="new")
         plt.legend()
         plt.title(title)
@@ -400,9 +485,8 @@ class LinePlot:
                     l += l2
                     cur_ax = ax
             else:
-                if subplots is not None:
-                    ax = sns.lineplot(x=t, y=yvals, label=s, ax=axes[i // subplots, i % subplots])
-                    cur_ax = ax
+                ax = sns.lineplot(x=t, y=yvals, label=s, ax=None if subplots is None else axes[i // subplots, i % subplots])
+                cur_ax = ax
             if mv:
                 mv_series = [np.mean(yvals[i:min(len(yvals),i+mv)]) for i in range(len(yvals))]
                 sns.lineplot(x=t, y=mv_series, label=f"{s}_mv_{mv}", ax=cur_ax)

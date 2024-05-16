@@ -25,6 +25,6 @@ $CONSTRAINT
 # Your commands here
 module load Anaconda2
 conda activate take2
-python3 lens_$1.py $2
+python3 $1.py
 
 EOT

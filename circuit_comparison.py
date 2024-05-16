@@ -21,23 +21,23 @@ from itertools import cycle
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
-from circuit_utils import edges_to_mask, edge_prune_mask, vertex_prune_mask, retrieve_mask, discretize_mask, prune_dangling_edges, get_ioi_nodes, nodes_to_mask, nodes_to_vertex_mask, mask_to_nodes
+from utils.circuit_utils import edges_to_mask, edge_prune_mask, vertex_prune_mask, retrieve_mask, discretize_mask, prune_dangling_edges, get_ioi_nodes, nodes_to_mask, nodes_to_vertex_mask, mask_to_nodes
 from training_utils import LinePlot
 
 # %%
 
-task_name = "gt"
+task_name = "ioi"
 folders=[
     ({
-        "vertex": f"results/pruning_vertices_auto/{task_name}", 
-        "edges HC": f"results/pruning_edges_auto/{task_name}_edges", 
-        "edges HC (vertex prior)": f"results/pruning_edges_auto/{task_name}_vertex_prior", 
-        "edges uniform": f"results/pruning_edges_auto/{task_name}_edges_unif", 
+        # "vertex": f"results/pruning_vertices_auto/{task_name}", 
+        # "edges HC": f"results/pruning_edges_auto/{task_name}_edges", 
+        # "edges HC (vertex prior)": f"results/pruning_edges_auto/{task_name}_vertex_prior", 
+        "edges uniform": f"results/pruning_edges_auto/{task_name}_unif", 
         "acdc": f"results_baseline/acdc_{task_name}_runs",
         "eap": f"results_baseline/eap_{task_name}_runs"
     }),
 ]
-out_folder = f"similarities/{task_name}"
+out_folder = f"results/similarities/{task_name}"
 
 # %%
 
@@ -67,6 +67,7 @@ for task in folders:
         if os.path.exists(f"{folder}/post_training.pkl"):
             with open(f"{folder}/post_training.pkl", "rb") as f:
                 post_training = pickle.load(f)
+                del post_training['vertices']
                 post_training_df = pd.DataFrame(post_training)
                 training_dfs[k] = post_training_df
         for lamb_path in glob.glob(f"{folder}/*"):

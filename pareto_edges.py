@@ -96,52 +96,119 @@ def plot_pareto(pms):
 
 # %%
 
-def compare_train_curves(folder_1, folder_2):
+def compare_train_curves(folder_1, folder_2, edge_assn=False):
+    edge_lookup_1 = {}
+    edge_lookup_2 = {}
+    if os.path.exists(f"{folder_1}/post_training.pkl"):
+        with open(f"{folder_1}/post_training.pkl", "rb") as f:
+            log = pickle.load(f)
+        # print(log)
+        for i, edges in enumerate(log['edges']):
+            edge_lookup_1[log['lamb'][i]] = edges
+
+    if os.path.exists(f"{folder_2}/post_training.pkl"):
+        with open(f"{folder_2}/post_training.pkl", "rb") as f:
+            log = pickle.load(f)
+        # print(log)
+        for i, edges in enumerate(log['edges']):
+            edge_lookup_2[log['lamb'][i]] = edges
+    
+    print(edge_lookup_1)
+    print(edge_lookup_2)
+    edge_corr = {}
+    if edge_assn:
+        for lamb in edge_lookup_1:
+            cur_edge_diff = 10000
+            for lamb_2 in edge_lookup_2:
+                edge_diff = abs(edge_lookup_2[lamb_2] - edge_lookup_1[lamb])
+                if edge_diff < cur_edge_diff:
+                    cur_edge_diff = edge_diff
+                    edge_corr[lamb] = lamb_2
+
     for path in glob.glob(f"{folder_1}/*"):
         lamb = path.split("/")[-1]
-        if os.path.exists(f"{folder_1}/{lamb}/fit_loss_log.pkl") and os.path.exists(f"{folder_2}/{lamb}/fit_loss_log.pkl"):
+
+        if not os.path.exists(f"{folder_1}/{lamb}/"):
+            continue
+
+        if edge_assn:
+            lamb_2 = edge_corr[lamb]
+        else:
+            lamb_2 = lamb
+
+        if os.path.exists(f"{folder_1}/{lamb}/fit_loss_log.pkl") and os.path.exists(f"{folder_2}/{lamb_2}/fit_loss_log.pkl"):
             with open(f"{folder_1}/{lamb}/fit_loss_log.pkl", "rb") as f:
                 train_curve_1 = pickle.load(f)
-            with open(f"{folder_2}/{lamb}/fit_loss_log.pkl", "rb") as f:
+            with open(f"{folder_2}/{lamb_2}/fit_loss_log.pkl", "rb") as f:
                 train_curve_2 = pickle.load(f)
+            
+            if lamb in edge_lookup_1:
+                print("edges control:", edge_lookup_1[lamb])
+            if lamb_2 in edge_lookup_2:
+                print("edges new:", edge_lookup_2[lamb_2])
+            
             train_curve_1.compare_plot("kl_loss", 50, train_curve_2, f"Post training comparison {lamb}", start=500)
         
-        if os.path.exists(f"{folder_1}/{lamb}/metadata.pkl") and os.path.exists(f"{folder_2}/{lamb}/metadata.pkl"):
+        if os.path.exists(f"{folder_1}/{lamb}/metadata.pkl") and os.path.exists(f"{folder_2}/{lamb_2}/metadata.pkl"):
             with open(f"{folder_1}/{lamb}/metadata.pkl", "rb") as f:
                 train_curve_1 = pickle.load(f)[0]
-            with open(f"{folder_2}/{lamb}/metadata.pkl", "rb") as f:
+            with open(f"{folder_2}/{lamb_2}/metadata.pkl", "rb") as f:
                 train_curve_2 = pickle.load(f)[0]
-            train_curve_1.compare_plot("kl_loss", 50, train_curve_2, f"Training comparison {lamb}", start=500)
+            train_curve_1.compare_plot("kl_loss", 50, train_curve_2, f"Training comparison {lamb}", start=300)
 
-            train_curve_1.compare_plot("complexity_loss", 50, train_curve_2, f"Training comparison {lamb}", start=500)
+            train_curve_1.compare_plot("complexity_loss", 50, train_curve_2, f"Training comparison {lamb}", start=300)
 # %%
-        
-compare_train_curves("results/pruning_edges_auto/ioi_unif", "results/pruning_edges_auto-5-6/ioi_edges_unif")
+# comparing ioi with diverse dataset to templated dataset
+compare_train_curves("../iprobesold/pruning_edges_auto/ioi_edges_unif", "results/pruning_edges_auto-5-6/ioi_edges_unif")
+
 # %%
+compare_train_curves("results/pruning_edges_auto/ioi_b_unif_wrong_4", "results/pruning_edges_auto-5-6/ioi_edges_unif")
+
 # %%
+compare_train_curves("results/pruning_edges_auto/ioi_unif_correct", "results/pruning_edges_auto/ioi_scale_var")
+
+
+# %%
+
+# wrong: attached bottom derivative with zero node reg
+# wrong_2: attached bottom derivative, fixed node_reg to 5e-3
+# wrong_3: attached bottom derivative, fixed node_reg to 5e-4
+# correct: scaling node_reg, detached bottom derivative
+
+# wrong_3 ioi_b: corrected diverse dataset predicting first token of IO
+# wrong_4 ioi_b: wrong diverse dataset, sometimes predicting IO completion
+compare_train_curves("results/pruning_edges_auto-5-6/gt_edges_unif", "results/pruning_edges_auto/gt_unif_wrong")
+
+# %%
+# 
+compare_train_curves("results/pruning_edges_auto/ioi_acdc", "results/pruning_edges_auto/ioi_unif", edge_assn=True)
+
+ # %%
 ax = None
 # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
 folders=[
     ({
-        "vertex": "results/pruning_vertices_auto/ioi", 
-        "edges HC": "results/pruning_edges_auto/ioi_edges", 
-        "edges HC (vertex prior)": "results/pruning_edges_auto/ioi_vertex_prior", 
-        "edges uniform": "results/pruning_edges_auto/ioi_edges_unif", 
-        "edges uniform window": "results/pruning_edges_auto/ioi_unif_window", 
+        # "vertex": "results/pruning_vertices_auto/ioi", 
+        # "edges HC": "results/pruning_edges_auto/ioi_edges", 
+        # "edges HC (vertex prior)": "results/pruning_edges_auto/ioi_vertex_prior", 
+        "edges uniform": "results/pruning_edges_auto/ioi_unif", 
+        # "edges uniform window": "results/pruning_edges_auto/ioi_unif_window", 
     }, {
         "ACDC": "results/pruning_edges_auto/ioi_acdc",
-        "eap": "results/pruning_edges_auto/ioi_eap"
+        # "eap": "results/pruning_edges_auto/ioi_eap"
     }, 0.15, 3000, "ioi"),
     ({
-        "vertex": "results/pruning_vertices_auto/gt", 
-        "edges HC": "results/pruning_edges_auto/gt_edges", 
-        "edges HC (vertex prior)": "results/pruning_edges_auto/gt_vertex_prior", 
-        "edges uniform": "results/pruning_edges_auto/gt_edges_unif", 
+        # "vertex": "results/pruning_vertices_auto/gt", 
+        # "edges HC": "results/pruning_edges_auto/gt_edges", 
+        # "edges HC (vertex prior)": "results/pruning_edges_auto/gt_vertex_prior", 
+        "edges uniform": "results/pruning_edges_auto/gt_unif", 
     }, {
         "ACDC": "results/pruning_edges_auto/gt_acdc",
-        "eap": "results/pruning_edges_auto/gt_eap"
+        # "eap": "results/pruning_edges_auto/gt_eap"
     }, 0.05,1000,"gt"),
 ]
 
 for folder in folders:
     plot_pareto(folder)
+
+# %%

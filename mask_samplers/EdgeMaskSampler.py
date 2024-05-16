@@ -90,7 +90,11 @@ class EdgeMaskUnifSampler(EdgeMaskJointSampler):
     # more scale = more Unif
     def sample_modified_unif(self, unif, sampling_params):
         probs = sampling_params[...,0].sigmoid()
-        return 1-((unif - probs) / (self.temp_scale * probs * (1 - probs)).detach() + 0.5).clamp(0,1)
+        window_sz = (self.temp_scale * probs * (1 - probs)).detach()
+
+        # we want scale invariance
+        probs = window_sz * probs - (window_sz - 1) * probs.detach()
+        return 1-((unif - probs) / window_sz + 0.5).clamp(0,1)
 
     def sample_bernoulli(self, unif, sampling_params):
         with torch.no_grad():

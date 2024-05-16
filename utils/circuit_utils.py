@@ -199,7 +199,7 @@ def discretize_mask(prune_mask, threshold):
 # mlp-mlp: (bsz * n_samples) x 1 (seq_pos) x i x 1 (d_model)
 
 # check for dangling edges
-def prune_dangling_edges(filtered_prune_mask, bsz=1, skip_filtering=False):
+def prune_dangling_edges(filtered_prune_mask, bsz=1, skip_filtering=False, node_counts=False):
     if bsz == 1:
         num_edges = total_edges(filtered_prune_mask)
         print("num edges", num_edges)
@@ -262,8 +262,11 @@ def prune_dangling_edges(filtered_prune_mask, bsz=1, skip_filtering=False):
     if bsz == 1:
         clipped_num_edges = total_edges(filtered_prune_mask)
         print("num edges after dangling edges removed", clipped_num_edges)
-
-        return filtered_prune_mask, num_edges, clipped_num_edges, attn_edges_in, mlp_edges_in[1:-1]
+        
+        if node_counts:
+            return filtered_prune_mask, num_edges, clipped_num_edges, attn_edges_in + attn_edges_out, mlp_edges_in[:,1:-1] + mlp_edges_out[:,1:-1]
+        else:
+            return filtered_prune_mask, num_edges, clipped_num_edges, attn_edges_in, mlp_edges_in[:,1:-1]
 
     return filtered_prune_mask
 
@@ -314,7 +317,7 @@ def mask_to_nodes(mask, mask_type="edges", return_tensor=False):
         _, _, _, attn_nodes, mlp_nodes = prune_dangling_edges(mask)
     else:
         attn_nodes = torch.stack(mask['attn'], dim=1)
-        mlp_nodes = torch.stack(mask['mlp'], dim=1)
+        mlp_nodes = torch.stack(mask['mlp'], dim=1)        
     attn_nodes = attn_nodes.squeeze(0).nonzero()
     mlp_nodes = mlp_nodes.squeeze(0).nonzero()
     node_count = attn_nodes.shape[0] + mlp_nodes.shape[0]

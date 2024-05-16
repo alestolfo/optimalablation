@@ -6,7 +6,7 @@ import os
 import torch
 # %%
 
-for x in glob.glob("pruning_edges_auto/ioi_vertex_prior/*"):
+for x in glob.glob("../results/pruning_edges_auto/ioi_unif_correct/*"):
     print(x)
     try:
         float(x.split("/")[-1])

@@ -28,8 +28,9 @@ model.cfg.use_hook_mlp_in = True
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
-dataset = "ioi"
-folder=f"results/pruning_edges_auto/{dataset}_edges_unif"
+# %%
+dataset = "gt"
+folder=f"results/pruning_edges_auto/{dataset}_unif"
 load_edges = False
 
 batch_size=50
@@ -51,6 +52,4 @@ edge_pruner.add_patching_hooks()
 # %%
 next_batch = partial(task_ds.next_batch, tokenizer)
 pruning_cfg.record_post_training(edge_pruner, ds_test, next_batch, load_edges=load_edges)
-# %%
-
 # %%

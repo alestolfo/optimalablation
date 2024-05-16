@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from torch.autograd.functional import jacobian
 import pickle
 from utils.training_utils import load_model_data, save_hook_last_token, LinePlot
-from utils.lens_utils import apply_lens, apply_modal_lens
+from utils.lens_utils import LensExperiment
 
 # %%
 sns.set()
@@ -111,6 +111,11 @@ for param in model.parameters():
 
 for p in lens_bias:
     p.register_hook(lambda grad: torch.nan_to_num(grad, nan=0, posinf=0, neginf=0))
+
+exp = LensExperiment(model, owt_iter, {}, device, pretrained=False)
+exp.all_lens_weights['grad'] = lens_weights
+exp.all_lens_bias['grad'] = lens_bias
+
 # %%
 
 tuned_loss_series = [f"kl_loss_{k}" for k in range(n_layers)]
@@ -132,7 +137,7 @@ for i in tqdm(range(50000)):
                 ]
     )[:,-1].softmax(dim=-1).unsqueeze(1)
 
-    lens_probs = apply_lens(model, lens_weights, lens_bias, activation_storage)
+    lens_probs = exp.apply_lens('grad', activation_storage)
 
     kl_losses = kl_loss(lens_probs.log(), model_probs).sum(dim=-1).mean(dim=0)
     

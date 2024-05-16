@@ -11,6 +11,7 @@ import math
 from functools import partial
 import torch.optim
 import os
+import random
 import time
 from itertools import cycle
 import seaborn as sns
@@ -19,6 +20,7 @@ import pickle
 import json
 from pathlib import Path
 from utils.training_utils import load_model_data, LinePlot
+from utils.datasets.ioi.ioi_dataset import IOIDataset
 from utils.datasets.greater_than.utils import get_valid_years
 from utils.datasets.greater_than.data import YearDataset
 
@@ -41,7 +43,7 @@ class OWTConfig():
         batch = next(self.ds_iter)['tokens'].to(self.device)
         return batch, batch.shape[1] - 1
     
-class IOIConfig():
+class IOIConfigDiverse():
     def __init__(self, batch_size, device, test_size=10000):
         self.batch_size = batch_size
         self.device = device
@@ -68,25 +70,92 @@ class IOIConfig():
             # n_layers x n_heads x d_model
             init_modes_mlp = pickle.load(f)
         return init_modes_attention[:,-1], init_modes_mlp[:,-1]
-        # with open("modes/ioi/means_attention.pkl", "rb") as f:
-        #     # n_layers x n_heads x d_model
-        #     init_modes_attention = pickle.load(f)
-        # with open("modes/ioi/means_mlp.pkl", "rb") as f:
-        #     # n_layers x n_heads x d_model
-        #     init_modes_mlp = pickle.load(f)
-        # return init_modes_attention, init_modes_mlp
 
-    def next_batch(self, tokenizer, test_batch=None):
+    def next_batch(self, tokenizer, test_batch=None, counterfactual=False):
         if test_batch is not None:
             b = test_batch
         else:
             b = next(self.ds_iter)
-        batch = tokenizer(b['ioi_sentences'], padding=True, return_tensors='pt')['input_ids'].to(self.device)
-        last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(self.device)).argmax(dim=-1) 
+
+        # remove label, it can be more than one token
+        # batch = [s.rsplit(' ', 1)[0] for s in b['ioi_sentences']]
+        batch = b['ioi_sentences']
+
+        batch = tokenizer(batch, padding=True, return_tensors='pt')['input_ids'].to(self.device)
         
         # prepend bos token
         batch = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(batch.shape[0],1).to(self.device),batch], dim=1)
+
+        # last_token_pos is the last token position in the prompt (NOT the label position)
+        last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(self.device)).argmax(dim=-1) - 1
+        
         return batch, last_token_pos
+
+class IOIConfig():
+    def __init__(self, batch_size, device, test_size=10000, fix_prompt=False):
+        self.batch_size = batch_size
+        self.device = device
+
+        self.test_size = test_size
+        self.seed = 0
+        self.fix_prompt = fix_prompt
+        
+    def get_test_set(self, tokenizer):
+        test_set = IOIDataset(
+            prompt_type="ABBA",
+            N=self.test_size,
+            nb_templates=None,
+            seed = 239405930245,
+        ).toks
+        self.ds_test = DataLoader(test_set, batch_size=self.batch_size)
+        return self.ds_test
+
+    def init_modes(self, cf=False):
+        if cf:
+            cf_tag = "cf_"
+        else:
+            cf_tag = ""
+
+        with open(f"results/oca/ioi/means_{cf_tag}attention.pkl", "rb") as f:
+            # n_layers x n_heads x d_model
+            init_modes_attention = pickle.load(f)
+        with open(f"results/oca/ioi/means_{cf_tag}mlp.pkl", "rb") as f:
+            # n_layers x n_heads x d_model
+            init_modes_mlp = pickle.load(f)
+        return init_modes_attention[:,-1], init_modes_mlp[:,-1]
+
+    def next_batch(self, tokenizer, test_batch=None, counterfactual=False):
+        if test_batch is not None:
+            batch = test_batch
+        else:
+            ioi_dataset = IOIDataset(
+                prompt_type="ABBA",
+                N=self.batch_size,
+                # if fix prompt, output only one prompt template per batch to enable resamples
+                nb_templates=random.randint(1,15) if self.fix_prompt else None,
+                single_template=self.fix_prompt,
+                seed=self.seed
+            )
+            self.seed += 1
+            batch = ioi_dataset.toks
+
+        # prepend bos token
+        batch = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(batch.shape[0],1),batch], dim=1).to(self.device)
+
+        # last_token_pos is the last token position in the prompt (NOT the label position). In this dataset, I believe names are guaranteed to be a single token long
+        last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(self.device)).argmax(dim=-1) - 1
+
+        if counterfactual:
+            cf = (
+                ioi_dataset
+                # .gen_flipped_prompts(("IO", "RAND"), seed=1)
+                # .gen_flipped_prompts(("S", "RAND"), seed=2)
+                .gen_flipped_prompts(("S1", "RAND"), seed=3)
+            ).toks
+            cf = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(cf.shape[0],1),cf], dim=1).to(self.device)
+            return batch, last_token_pos, cf
+        else:
+            return batch, last_token_pos
 
 class GTConfig():
     def __init__(self, batch_size, device, test_size=10000):
@@ -99,15 +168,20 @@ class GTConfig():
     def get_test_set(self, tokenizer):
         if self.years_to_sample_from is None:
             self.years_to_sample_from = get_valid_years(tokenizer, 1000, 1900)
-        test_set = YearDataset(self.years_to_sample_from, self.test_size, Path("greater_than/potential_nouns.txt"), tokenizer, balanced=False, device=self.device, eos=False).good_toks
+        test_set = YearDataset(self.years_to_sample_from, self.test_size, Path("utils/datasets/greater_than/potential_nouns.txt"), tokenizer, balanced=False, device=self.device, eos=False).good_toks
         self.ds_test = DataLoader(test_set, batch_size=self.batch_size)
         return self.ds_test
 
-    def init_modes(self):
-        with open("oca/gt/means_attention.pkl", "rb") as f:
+    def init_modes(self, cf=False):
+        if cf:
+            cf_tag = "cf_"
+        else:
+            cf_tag = ""
+
+        with open(f"results/oca/gt/means_{cf_tag}attention.pkl", "rb") as f:
             # n_layers x n_heads x d_model
             init_modes_attention = pickle.load(f)
-        with open("oca/gt/means_mlp.pkl", "rb") as f:
+        with open(f"results/oca/gt/means_{cf_tag}mlp.pkl", "rb") as f:
             # n_layers x n_heads x d_model
             init_modes_mlp = pickle.load(f)
         return init_modes_attention[:,-1], init_modes_mlp[:,-1]
@@ -119,17 +193,30 @@ class GTConfig():
         #     init_modes_mlp = pickle.load(f)
         # return init_modes_attention, init_modes_mlp
 
-    def next_batch(self, tokenizer, test_batch=None):
+    def next_batch(self, tokenizer, test_batch=None, counterfactual=False):
         if test_batch is not None:
             batch = test_batch
         else:
             if self.years_to_sample_from is None:
                 self.years_to_sample_from = get_valid_years(tokenizer, 1000, 1900)
-            batch = YearDataset(self.years_to_sample_from, self.batch_size, Path("greater_than/potential_nouns.txt"), tokenizer, balanced=False, device=self.device, eos=False).good_toks
-        last_token_pos = ((batch.shape[1] - 1) * torch.ones(batch.shape[0])).int().to(self.device)
-        # prepend bos token
+            batch = YearDataset(self.years_to_sample_from, self.batch_size, Path("utils/datasets/greater_than/potential_nouns.txt"), tokenizer, balanced=False, device=self.device, eos=False)
+
+            # examples with start year replaced with "01"
+            if counterfactual:
+                cf = batch.bad_toks
+            batch = batch.good_toks
+
+        # prepend bos token. Batch does not contain labels
         batch = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(batch.shape[0],1).to(self.device),batch], dim=1)
-        return batch, last_token_pos
+
+        # last_token_pos is the last token position in the prompt (NOT the label position)
+        last_token_pos = ((batch.shape[1] - 1) * torch.ones(batch.shape[0])).int().to(self.device)
+        
+        if counterfactual:
+            cf = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(cf.shape[0],1).to(self.device),cf], dim=1)
+            return batch, last_token_pos, cf
+        else:
+            return batch, last_token_pos
 
 # NOT WORKING
 class ColorConfig():
@@ -148,9 +235,11 @@ class ColorConfig():
         return batch, last_token_pos
 
 
-def get_task_ds(dataset, bsz, device):
+def get_task_ds(dataset, bsz, device, fix_prompt=False):
     if dataset == "ioi":
-        task_ds = IOIConfig(bsz, device)
+        task_ds = IOIConfig(bsz, device, fix_prompt=fix_prompt)
+    elif dataset == "ioi_b":
+        task_ds = IOIConfigDiverse(bsz, device)
     elif dataset == "gt":
         task_ds = GTConfig(bsz, device)
     else:

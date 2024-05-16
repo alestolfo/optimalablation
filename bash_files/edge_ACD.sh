@@ -1,5 +1,16 @@
 #!/bin/bash
 
+PARTITION=$1
+echo $1
+shift
+
+if [ $PARTITION == "gpu" ] 
+then
+CONSTRAINT=""
+else
+CONSTRAINT='#SBATCH --constraint="a100"'
+fi
+
 ACD_TYPE=$1
 echo $1
 shift
@@ -16,8 +27,8 @@ do
 sbatch <<EOT
 #!/bin/bash
 #SBATCH -c 1
-#SBATCH -p seas_gpu
-#SBATCH --constraint="a100"
+#SBATCH -p $PARTITION
+$CONSTRAINT
 #SBATCH --job-name=eACD_$DATASET-$var
 #SBATCH --gpus 1
 #SBATCH --mem=32000

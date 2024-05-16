@@ -38,7 +38,13 @@ n_heads = model.cfg.n_heads
 # %%
 args = load_args("pruning_edges_auto", 1.8e-4, {"name": "edges_unif"})
 folder, reg_lamb, dataset = args["folder"], args["lamb"], args["dataset"]
-node_reg=2e-3
+node_reg = min(0.2 * reg_lamb * 146, 1e-2)
+
+# if dataset == "gt":
+#     node_reg = 5e-4
+# else:
+#     node_reg = 5e-3
+
 gpu_requeue = True
 # reset_optim = 1000
 

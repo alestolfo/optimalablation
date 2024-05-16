@@ -79,7 +79,12 @@ class MaskSampler(torch.nn.Module):
                 #     continue
                 unif = torch.rand((bsz, *ts.shape[:-1])).to(self.pruning_cfg.device)
 
-                prune_mask[k].append(self.sampling_function(unif, ts))
+                # re-weight by number of samples for lower var
+                samples = self.sampling_function(unif, ts)
+                grad_wts = bsz / ((samples < 1-1e-3) * (samples > 1e-3)).sum(dim=0).clamp(min=1)
+                samples = grad_wts * samples + (1 - grad_wts) * samples.detach()
+
+                prune_mask[k].append(samples)
 
         self.sampled_mask = prune_mask
         
