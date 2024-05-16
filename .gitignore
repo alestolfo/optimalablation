@@ -8,3 +8,4 @@ SAE_training/SAE_*
 *9.png
 *kl_losses.png
 */mask.png
+utils/datasets/facts/*
