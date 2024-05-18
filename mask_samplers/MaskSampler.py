@@ -51,6 +51,9 @@ class MaskSampler(torch.nn.Module):
         self.def_value = 2/3
         self.sampling_function = self.sample_hard_concrete
 
+        self.normalize_empirical_mask = False
+        self.total_grad_samples = {k: [0 for _ in self.sampling_params[k]] for k in self.sampling_params}
+
         for param in self.parameters():
             param.register_hook(lambda grad: torch.nan_to_num(grad, nan=0, posinf=0, neginf=0))
         
@@ -58,7 +61,7 @@ class MaskSampler(torch.nn.Module):
         # returns N x 2 tensor
         return torch.cat([ts.flatten(start_dim=0, end_dim=-2) if len(ts.shape) > 1 else ts.unsqueeze(0) for k in self.sampling_params for ts in self.sampling_params[k]], dim=0)
         
-    def sample_hard_concrete(self, unif, sampling_params):
+    def sample_hard_concrete(self, unif, sampling_params, param_loc=None):
         # back prop against log alpha
         endpts = self.pruning_cfg.hard_concrete_endpoints
         concrete = (((.001+unif).log() - (1-unif).log() + sampling_params[...,0])/(sampling_params[...,1].relu()+.001)).sigmoid()
@@ -79,10 +82,21 @@ class MaskSampler(torch.nn.Module):
                 #     continue
                 unif = torch.rand((bsz, *ts.shape[:-1])).to(self.pruning_cfg.device)
 
+                samples = self.sampling_function(unif, ts, (k, i))
+                
                 # re-weight by number of samples for lower var
-                samples = self.sampling_function(unif, ts)
-                grad_wts = bsz / ((samples < 1-1e-3) * (samples > 1e-3)).sum(dim=0).clamp(min=1)
-                samples = grad_wts * samples + (1 - grad_wts) * samples.detach()
+                if self.normalize_empirical_mask:
+                    n_samples = ((samples < 1-1e-3) * (samples > 1e-3)).sum(dim=0)
+
+                    grad_wts = torch.where(
+                        n_samples < 1, 
+                        0,
+                        bsz / n_samples
+                    )
+
+                    self.total_grad_samples[k][i] += grad_wts.detach()
+
+                    samples = grad_wts * samples + (1 - grad_wts) * samples.detach()
 
                 prune_mask[k].append(samples)
 

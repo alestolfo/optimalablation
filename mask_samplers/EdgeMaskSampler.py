@@ -44,7 +44,8 @@ class EdgeMaskJointSampler(MaskSampler):
             layer_loss = self.complexity_loss(ts)
             node_losses_in[i] = node_losses_in[i] + layer_loss.sum(dim=[0,2])
         
-        return F.tanh(2 * (node_losses_out + torch.stack(node_losses_in, dim=0)) / (n_layers * n_heads))        
+        # derivative peaks at 1
+        return F.tanh(2 * (node_losses_out + torch.stack(node_losses_in, dim=0)) / (n_layers * n_heads)) * (n_layers * n_heads) / 2       
 
     def forward(self):
         if not self.fix_mask:
@@ -85,18 +86,54 @@ class EdgeMaskUnifSampler(EdgeMaskJointSampler):
         self.temp_scale = 1
         self.log_columns = ['complexity_loss']
         self.use_temperature = False
+
+        self.param_stds = {}
+        self.mean_param_std = None
+
+        self.min_window = None
+        self.max_window = None
+        
+        self.normalize_empirical_mask = True
     
     # maximum scale = 2
     # more scale = more Unif
-    def sample_modified_unif(self, unif, sampling_params):
+    def sample_modified_unif(self, unif, sampling_params, param_loc=None, dynamic_window=False):
         probs = sampling_params[...,0].sigmoid()
-        window_sz = (self.temp_scale * probs * (1 - probs)).detach()
 
-        # we want scale invariance
+        if dynamic_window:
+            if self.mean_param_std is None:
+                print("No stds found, going to default window size")
+                window_sz = self.temp_scale
+            else:
+                k, i = param_loc
+                window_sz = (self.param_stds[k][i].squeeze(-1) / self.mean_param_std).clip(min=self.min_window,max=self.max_window)
+        else:
+            window_sz = self.temp_scale
+        
+        window_sz = (window_sz * probs * (1 - probs)).detach()
+
+        # scale invariance
         probs = window_sz * probs - (window_sz - 1) * probs.detach()
-        return 1-((unif - probs) / window_sz + 0.5).clamp(0,1)
 
-    def sample_bernoulli(self, unif, sampling_params):
+        return 1-((unif - probs) / window_sz + 0.5).clamp(0,1)
+    
+    def update_param_vars(self, adam_vars, clip_q=0.01):
+        # adam vars is in a long list
+        all_adam_stds = []
+        i = 0
+        for k in self.sampling_params:
+            self.param_stds[k] = []
+            for j, ts in enumerate(self.sampling_params[k]):
+                assert adam_vars[i].shape == ts.shape
+                adam_std = adam_vars[i].sqrt()
+                self.param_stds[k].append(adam_std)
+                all_adam_stds.append(adam_std.flatten())
+                i += 1
+        avg_std = torch.cat(all_adam_stds, dim=0)
+        avg_std = avg_std.clip(max=avg_std.quantile(1-clip_q))
+        self.mean_param_std = avg_std.mean()
+
+    def sample_bernoulli(self, unif, sampling_params, param_loc=None):
         with torch.no_grad():
             probs = sampling_params[...,0].sigmoid()
             return (unif < probs.detach()) * 1
@@ -125,11 +162,13 @@ class EdgeMaskUnifSampler(EdgeMaskJointSampler):
     def record_state(self, j):
         all_sampling_params = self.get_sampling_params()
 
-        sns.histplot(torch.cat([ts.flatten() for k in self.sampled_mask for ts in self.sampled_mask[k]], dim=0).detach().flatten().cpu())
+        sns.histplot(torch.cat([
+            ts.flatten() for k in self.sampled_mask for ts in self.sampled_mask[k]
+        ], dim=0).detach().flatten().cpu(), log_scale=(False, True))
         plt.savefig(f"{self.pruning_cfg.folder}/mask{j}.png")
         plt.close()
 
-        sns.histplot(x=all_sampling_params.sigmoid().detach().flatten().cpu(), bins=100)
+        sns.histplot(x=all_sampling_params.sigmoid().detach().flatten().cpu(), bins=100, log_scale=(False, True))
         plt.savefig(f"{self.pruning_cfg.folder}/params-probs{j}.png")
         plt.close()
     
@@ -214,90 +253,72 @@ class EdgeMaskUnifWindowSampler(EdgeMaskUnifSampler):
                 prune_mask[k].append(requires_settle * settled_outcome + (1-requires_settle) * section_mask)
             
         self.sampled_mask = prune_mask
-    # maximum scale = 2
-    # more scale = more Unif
-    # Perform PIT on Unif to map to mixture of Bernoulli and Unif
-    def sample_modified_unif(self, unif, sampling_params):
-        probs = sampling_params[...,0].sigmoid()
-        return 1-((unif - probs) / (self.temp_scale * probs * (1 - probs)).detach() + 0.5).clamp(0,1)
+    # # maximum scale = 2
+    # # more scale = more Unif
+    # # Perform PIT on Unif to map to mixture of Bernoulli and Unif
+    # def sample_modified_unif(self, unif, sampling_params):
+    #     probs = sampling_params[...,0].sigmoid()
+    #     return 1-((unif - probs) / (self.temp_scale * probs * (1 - probs)).detach() + 0.5).clamp(0,1)
 
-    def sample_window_mask(self):
-        bsz = self.pruning_cfg.n_samples * self.pruning_cfg.batch_size
-        current_edges = 0
-
-        prune_mask = {}
-        for k in self.sampling_params:
-            prune_mask[k] = []
-            for i, ts in enumerate(self.sampling_params[k]):
-                # if ts.nelement() == 0:
-                #     prune_mask[k].append(None)
-                #     continue
-                windows = self.windows[current_edges:current_edges + ts.nelement()].reshape(ts.shape[:-1])
-                unif = torch.rand((bsz, *ts.shape[:-1])).to(self.pruning_cfg.device)
-                prune_mask[k].append(self.sample_window_unif(unif, ts, windows))
-                # prune_mask[k].append(self.sample_modified_unif(unif, ts))
-                current_edges += ts.nelement()
-        self.sampled_mask = prune_mask
-
-    def sample_window_unif(self, unif, sampling_params, windows):
-        probs = sampling_params[...,0].sigmoid()
-        windows = torch.minimum(torch.minimum(2 * probs, 2 * (1-probs)), windows)
-        return 1-(((unif - probs) / windows.detach()) + 0.5).clamp(0,1)
+    # def sample_window_unif(self, unif, sampling_params, windows):
+    #     probs = sampling_params[...,0].sigmoid()
+    #     windows = torch.minimum(torch.minimum(2 * probs, 2 * (1-probs)), windows)
+    #     return 1-(((unif - probs) / windows.detach()) + 0.5).clamp(0,1)
 
     # sample Unif, but gradient wrt. params is as if it were the mixture
-    def sample_definite_unif(self, unif, sampling_params):
+    def sample_definite_unif(self, unif, sampling_params, param_loc=None):
         probs = sampling_params[...,0].sigmoid()
         return unif + (probs - probs.detach()) / (self.temp_scale * probs * (1 - probs)).detach()
     
     def forward(self):
         return super().forward()
     
-    def get_sampling_grads(self):
-        return torch.cat([
-            ts.grad.flatten(start_dim=0, end_dim=-2) 
-            if len(ts.shape) > 1 
-            else ts.grad.unsqueeze(0) 
-            for k in self.sampling_params 
-            for ts in self.sampling_params[k]
-        ], dim=0)
+    # def get_sampling_grads(self):
+    #     return torch.cat([
+    #         ts.grad.flatten(start_dim=0, end_dim=-2) 
+    #         if len(ts.shape) > 1 
+    #         else ts.grad.unsqueeze(0) 
+    #         for k in self.sampling_params 
+    #         for ts in self.sampling_params[k]
+    #     ], dim=0)
     
-    def compile_grads(self):
-        # N x 1
-        grads = self.get_sampling_grads()
+    # def compile_grads(self):
+    #     # N x 1
+    #     grads = self.get_sampling_grads()
 
-        with torch.no_grad():
-            # N x 1
-            new_samples = torch.cat([
-                ((ts > 0) * (ts < 1)).sum(dim=0).flatten()
-                for k in self.sampled_mask 
-                for ts in self.sampled_mask[k]
-            ], dim=0).unsqueeze(-1)
+    #     with torch.no_grad():
+    #         # N x 1
+    #         new_samples = torch.cat([
+    #             ((ts > 0) * (ts < 1)).sum(dim=0).flatten()
+    #             for k in self.sampled_mask 
+    #             for ts in self.sampled_mask[k]
+    #         ], dim=0).unsqueeze(-1)
 
-            grads = torch.where(
-                new_samples > 0,
-                grads,
-                0
-            )
-            self.running_mean, self.running_variance, self.running_batches, self.running_samples = update_means_variances_mixed(self.running_mean, self.running_variance, grads, self.running_batches, self.running_samples, new_samples)
+    #         grads = torch.where(
+    #             new_samples > 0,
+    #             grads,
+    #             0
+    #         )
+    #         self.running_mean, self.running_variance, self.running_batches, self.running_samples = update_means_variances_mixed(self.running_mean, self.running_variance, grads, self.running_batches, self.running_samples, new_samples)
 
-    def compile_grads_exponential(self):
-        # N x 1
-        grads = self.get_sampling_grads()
+    # def compile_grads_exponential(self):
+    #     # N x 1
+    #     grads = self.get_sampling_grads()
 
-        with torch.no_grad():
-            # N x 1
-            new_samples = torch.cat([
-                ((ts > 0) * (ts < 1)).sum(dim=0).flatten()
-                for k in self.sampled_mask 
-                for ts in self.sampled_mask[k]
-            ], dim=0).unsqueeze(-1)
+    #     with torch.no_grad():
+    #         # N x 1
+    #         new_samples = torch.cat([
+    #             ((ts > 0) * (ts < 1)).sum(dim=0).flatten()
+    #             for k in self.sampled_mask 
+    #             for ts in self.sampled_mask[k]
+    #         ], dim=0).unsqueeze(-1)
 
-            grads = torch.where(
-                new_samples > 0,
-                grads,
-                0
-            )
-            self.running_mean, self.running_variance, self.running_batches, self.running_samples = update_means_variances_exponential(self.running_mean, self.running_variance, grads, self.running_batches, self.running_samples, new_samples)
+    #         grads = torch.where(
+    #             new_samples > 0,
+    #             grads,
+    #             0
+    #         )
+    #         self.running_mean, self.running_variance, self.running_batches, self.running_samples = update_means_variances_exponential(self.running_mean, self.running_variance, grads, self.running_batches, self.running_samples, new_samples)
 
     def update_window(self, new_default, window_min=5e-3):
         with torch.no_grad():
@@ -314,17 +335,6 @@ class EdgeMaskUnifWindowSampler(EdgeMaskUnifSampler):
         self.running_variance = torch.zeros_like(self.running_mean).to(self.pruning_cfg.device)
         self.running_batches = torch.zeros_like(self.running_mean).to(self.pruning_cfg.device)
         self.running_samples = torch.zeros_like(self.running_mean).to(self.pruning_cfg.device)
-
-    def record_state(self, j):
-        all_sampling_params = self.get_sampling_params()
-
-        sns.histplot(torch.cat([ts.flatten() for k in self.sampled_mask for ts in self.sampled_mask[k]], dim=0).detach().flatten().cpu())
-        plt.savefig(f"{self.pruning_cfg.folder}/mask{j}.png")
-        plt.close()
-
-        sns.histplot(x=all_sampling_params.sigmoid().detach().flatten().cpu(), bins=100)
-        plt.savefig(f"{self.pruning_cfg.folder}/params-probs{j}.png")
-        plt.close()
 
 class EdgeMaskBernoulliSampler(EdgeMaskUnifSampler):
     def __init__(self, pruning_cfg, node_reg=0):
