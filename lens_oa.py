@@ -9,6 +9,7 @@ import math
 from functools import partial
 import torch.optim
 import time
+from sys import argv
 import pandas as pd 
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -17,14 +18,26 @@ from utils.training_utils import load_model_data, save_hook_last_token, LinePlot
 from utils.lens_utils import LensExperiment
 
 # %%
+
 sns.set()
-folder="results/lens/oa"
+model_name = argv[1]
+folder=f"results/lens/{model_name}/oa"
 shared_bias = False
 
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"
-model_name = "gpt2-small"
-batch_size = 200
+
+if model_name == "gpt2-xl":
+    batch_size = 50
+elif model_name == "gpt2-large":
+    batch_size = 75
+elif model_name == "gpt2-medium":
+    batch_size = 100
+elif model_name == "gpt2-small":
+    batch_size = 200
+else:
+    raise Exception("Model not found")
+
 device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size)
 
 n_layers = model.cfg.n_layers
@@ -51,6 +64,10 @@ attn_bias = [
     torch.nn.Parameter((prior_bias[i] if shared_bias else prior_bias[i].repeat(i+1,1)).to(device)) for i in range(n_layers)
 ]
 
+exp = LensExperiment(model, owt_iter, {}, device, pretrained=False)
+exp.all_lens_bias['modal'] = attn_bias
+
+# %%
 lp = LinePlot([*[f"kl_loss_{k}" for k in range(n_layers)], 'step_size'])
 
 lens_optimizer = torch.optim.AdamW(attn_bias, lr=lr, weight_decay=0)
@@ -61,12 +78,9 @@ for param in model.parameters():
 for p in attn_bias:
     p.register_hook(lambda grad: torch.nan_to_num(grad, nan=0, posinf=0, neginf=0))
 
-exp = LensExperiment(model, owt_iter, {}, device, pretrained=False)
-exp.all_lens_bias['modal'] = attn_bias
-
 # %%
     
-for i in tqdm(range(lp.t, 50000)):
+for i in tqdm(range(lp.t, 30000)):
     batch = next(owt_iter)['tokens']
     lens_optimizer.zero_grad()
 
@@ -81,11 +95,11 @@ for i in tqdm(range(lp.t, 50000)):
                 ]
     )[:,-1].softmax(dim=-1).unsqueeze(1)
     
+    # LOGGED
     modal_lens_probs = exp.apply_modal_lens(activation_storage, shared_bias=shared_bias)
 
-    kl_losses = kl_loss(modal_lens_probs.log(), model_probs).sum(dim=-1).mean(dim=0)
+    kl_losses = kl_loss(modal_lens_probs, model_probs).sum(dim=-1).mean(dim=0)
     loss = kl_losses.sum()
-
     loss.backward()
 
     prev_weights = torch.cat(attn_bias, dim=0).detach()

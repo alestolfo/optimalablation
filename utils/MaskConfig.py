@@ -61,15 +61,15 @@ class InferenceConfig:
 
             for mask_tensor in self.constant_prune_mask[k]:
                 if init_scale is None:
-                    param = mask_tensor.squeeze(0).unsqueeze(-1) * init_param 
+                    param = mask_tensor.to(self.device).squeeze(0).unsqueeze(-1) * init_param 
                 else:
-                    param = torch.randn(mask_tensor.shape[1:]).unsqueeze(-1) * init_scale
+                    param = torch.randn(mask_tensor.shape[1:]).unsqueeze(-1).to(self.device) * init_scale
                 
                 # two parameters per component
                 if use_temp:
-                    param = torch.cat([param, torch.ones(mask_tensor.shape[1:]).unsqueeze(-1) * self.starting_beta], dim=-1)
+                    param = torch.cat([param, torch.ones(mask_tensor.shape[1:]).unsqueeze(-1).to(self.device) * self.starting_beta], dim=-1)
 
-                self.init_params[k].append(param.to(self.device))
+                self.init_params[k].append(param)
 
     def reset_temp(self):
         self.temp_c = 0
@@ -125,13 +125,13 @@ class InferenceConfig:
         if 'temp' in component_pruner.log.stat_book:
             component_pruner.log.plot(['temp', 'temp_cond', 'temp_count', 'temp_reg'], save=f"{self.folder}/train-temp{j}.png")
 
+        snapshot_dict = {'sampling_optim_dict': sampling_optimizer.state_dict()}
         pruner_dict = component_pruner.state_dict()
         pruner_dict = {k: pruner_dict[k] for k in pruner_dict if not k.startswith("base_model")}
-        torch.save({
-            'pruner_dict': pruner_dict,
-            'sampling_optim_dict': sampling_optimizer.state_dict(),
-            'modal_optim_dict': modal_optimizer.state_dict(),
-        }, snapshot_path)
+        snapshot_dict['pruner_dict'] = pruner_dict
+        if modal_optimizer is not None:
+            snapshot_dict['modal_optim_dict'] = modal_optimizer.state_dict()
+        torch.save(snapshot_dict, snapshot_path)
 
         with open(metadata_path, "wb") as f:
             pickle.dump((component_pruner.log, lp_count, (self.temp_c, self.temp_momentum)), f)
@@ -145,9 +145,11 @@ class InferenceConfig:
         if gpu_requeue and os.path.exists(snapshot_path) and os.path.exists(metadata_path):
             print("Loading previous training run")
             previous_state = torch.load(snapshot_path)
-            component_pruner.load_state_dict(previous_state['pruner_dict'], strict=False)
             sampling_optimizer.load_state_dict(previous_state['sampling_optim_dict'])
-            modal_optimizer.load_state_dict(previous_state['modal_optim_dict'])
+
+            component_pruner.load_state_dict(previous_state['pruner_dict'], strict=False)
+            if modal_optimizer is not None:
+                modal_optimizer.load_state_dict(previous_state['modal_optim_dict'])
 
             with open(metadata_path, "rb") as f:
                 x = pickle.load(f)
@@ -161,88 +163,106 @@ class InferenceConfig:
             component_pruner.mask_sampler.load_snapshot()
             return lp_count
         
-        if pretrained_folder is not None:
+        if pretrained_folder is not None and modal_optimizer is not None:
             pretrained_snapshot_path = f"{pretrained_folder}/snapshot.pth"
             print("Loading pretrained weights")
             previous_state = torch.load(pretrained_snapshot_path)
             component_pruner.load_state_dict(previous_state['pruner_dict'], strict=False)
         
-        return LinePlot(['step_size', 'mode_step_size', 'max_grad_norm'])
+        lp = ['step_size', 'max_grad_norm']
+        if modal_optimizer is not None:
+            lp.append('mode_step_size')
+        return LinePlot(lp)
     
-    def record_post_training(self, component_pruner, ds_test, next_batch, in_format="edges", out_format="edges", load_edges=False):
-        log = {"lamb": [], "tau": [], "losses": []}
-        if out_format == "edges":
-            log["edges"] = []
-            log["clipped_edges"] = []
-            log["vertices"] = []
-        
-        for lamb_path in glob.glob(f"{self.folder}/*"):
-            lamb = lamb_path.split("/")[-1]
-            print(lamb)
-            # if lamb =="manual":
-                # if in_format == "edges":
-                #     prune_mask = get_ioi_edge_mask()
-                #     # prune_mask = edges_to_mask(ioi_edges)
-                # else:
-                #     ioi_nodes = get_ioi_nodes()
-                #     prune_mask = nodes_to_vertex_mask(ioi_nodes)
-            if load_edges and (lamb == "manual" or lamb[1] == "." or lamb[1:3] == "e-"):
-                edge_list = torch.load(f"{self.folder}/edges_{lamb}.pth")
-                prune_mask = edges_to_mask(edge_list)
+    def record_post_training(self, folders, component_pruner, next_batch, ablation_type="oa", in_format="edges", out_format="edges", load_edges=False):
+        for i, folder in enumerate(folders):
+            if isinstance(load_edges, list):
+                read_file = load_edges[i]
             else:
-                try:
-                    float(lamb[-1])
-                    float(lamb[0])
-                except:
-                    continue
-                prune_mask = retrieve_mask(lamb_path)
+                read_file = load_edges
 
-                if prune_mask is None:
-                    continue
+            log = {"lamb": [], "tau": [], "losses": []}
+            if out_format == "edges":
+                log["edges"] = []
+                log["clipped_edges"] = []
+                log["vertices"] = []
+            
+            for lamb_path in glob.glob(f"{folder}/*"):
+                lamb = lamb_path.split("/")[-1]
+                print(lamb)
+                # if lamb =="manual":
+                    # if in_format == "edges":
+                    #     prune_mask = get_ioi_edge_mask()
+                    #     # prune_mask = edges_to_mask(ioi_edges)
+                    # else:
+                    #     ioi_nodes = get_ioi_nodes()
+                    #     prune_mask = nodes_to_vertex_mask(ioi_nodes)
+                if read_file and (lamb == "manual" or lamb[1] == "." or lamb[1:3] == "e-"):
+                    edge_list = torch.load(f"{folder}/edges_{lamb}.pth")
+                    prune_mask = edges_to_mask(edge_list)
+                else:
+                    try:
+                        float(lamb[-1])
+                        float(lamb[0])
+                    except:
+                        continue
+                    prune_mask = retrieve_mask(lamb_path)
 
-            files = glob.glob(f"{lamb_path}/fit_modes_*.pth")
-            for tau_path in files:
-                tau = tau_path.split("/")[-1].replace("fit_modes_", "").replace(".pth", "")
-                print(tau)
-                try:
-                    tau = float(tau)
-                except: 
-                    continue
+                    if prune_mask is None:
+                        continue
                 
-                discrete_mask = discretize_mask(prune_mask, tau)
-                                    
-                if in_format=="edges":
-                    discrete_mask, edges, clipped_edges, attn_vertices, mlp_vertices = prune_dangling_edges(discrete_mask)
-                    total_vertices = (attn_vertices > 0).sum() + (mlp_vertices > 0).sum()
-                elif out_format=="edges":
-                    vertices, total_vertices = mask_to_nodes(discrete_mask, mask_type="nodes")
-                    _, edges = mask_to_edges(nodes_to_mask(vertices, all_mlps=False))
-                    clipped_edges = edges
+                specs = []
+                if ablation_type == "oa":
+                    files = glob.glob(f"{lamb_path}/fit_modes_*.pth")
+                    for tau_path in files:
+                        tau = tau_path.split("/")[-1].replace("fit_modes_", "").replace(".pth", "")
+                        print(tau)
+                        try:
+                            tau = float(tau)
+                        except: 
+                            continue
+                        specs.append({"tau": tau, "tau_path": tau_path})
+                else:
+                    specs.append({"tau": 0})
+                
+                for spec in specs:
+                    tau = spec["tau"]
 
-                component_pruner.mask_sampler.set_mask(discrete_mask)
-                component_pruner.load_state_dict(torch.load(tau_path), strict=False)
+                    discrete_mask = discretize_mask(prune_mask, tau)
+                                        
+                    if in_format=="edges":
+                        discrete_mask, edges, clipped_edges, attn_vertices, mlp_vertices = prune_dangling_edges(discrete_mask)
+                        total_vertices = (attn_vertices > 0).sum() + (mlp_vertices > 0).sum()
+                    elif out_format=="edges":
+                        vertices, total_vertices = mask_to_nodes(discrete_mask, mask_type="nodes")
+                        _, edges = mask_to_edges(nodes_to_mask(vertices, all_mlps=False))
+                        clipped_edges = edges
 
-                ds_iter = iter(ds_test)
-                kl_losses = []
+                    component_pruner.mask_sampler.set_mask(discrete_mask)
 
-                # print(component_pruner.mask_sampler.sampled_mask)
-                for i in tqdm(range(20)):
-                    batch, last_token_pos = next_batch(next(ds_iter))
-                    with torch.no_grad():
-                        loss = component_pruner(batch, last_token_pos, timing=False, print_loss=False)
-                    kl_losses.append(loss.mean().item())
-                avg_loss = np.mean(kl_losses)
-                log["lamb"].append(lamb)
-                log["tau"].append(tau)
-                log["edges"].append(edges)
-                log["clipped_edges"].append(clipped_edges)
-                log["vertices"].append(total_vertices)
-                log["losses"].append(avg_loss)
-                print("Clipped edges", clipped_edges)
-                print("Avg KL loss", avg_loss)
+                    if ablation_type == "oa":
+                        component_pruner.load_state_dict(torch.load(spec["tau_path"]), strict=False)
 
-        with open(f"{self.folder}/post_training.pkl", "wb") as f:
-            pickle.dump(log, f)
+                    kl_losses = []
+
+                    # print(component_pruner.mask_sampler.sampled_mask)
+                    for i in tqdm(range(20)):
+                        batch, last_token_pos, cf = next_batch()
+                        with torch.no_grad():
+                            loss = component_pruner(batch, last_token_pos, cf, timing=False, print_loss=False)
+                        kl_losses.append(loss.mean().item())
+                    avg_loss = np.mean(kl_losses)
+                    log["lamb"].append(lamb)
+                    log["tau"].append(tau)
+                    log["edges"].append(edges)
+                    log["clipped_edges"].append(clipped_edges)
+                    log["vertices"].append(total_vertices)
+                    log["losses"].append(avg_loss)
+                    print("Clipped edges", clipped_edges)
+                    print("Avg KL loss", avg_loss)
+
+            with open(f"{folder}/post_training.pkl", "wb") as f:
+                pickle.dump(log, f)
 
 
 # %%
@@ -261,7 +281,7 @@ class EdgeInferenceConfig(InferenceConfig):
 
         # used original LR (1e-1) for scale var, new LR (5e-2) for other three scale invariants.
         self.lr = 5e-2
-        self.lr_modes = 1e-3
+        self.lr_modes = 2e-3
 
         self.initialize_params(init_param, init_scale, use_temp=use_temp)
 
@@ -278,7 +298,7 @@ class VertexInferenceConfig(InferenceConfig):
         self.n_samples = 25
 
         self.lr = 1e-2
-        self.lr_modes = 1e-3
+        self.lr_modes = 2e-3
         
         self.initialize_params(init_param, init_scale, use_temp=use_temp)
 

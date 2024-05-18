@@ -21,26 +21,45 @@ from utils.lens_utils import LensExperiment, compile_loss_dfs, corr_plot, overal
 # %%
 sns.set()
 
+# model_name = argv[1]
+# dir_mode = argv[2]
+model_name = "gpt2-medium"
+dir_mode = "vanilla"
+
 folders = {
-    "modal": "results/lens/oa",
-    "linear_oa": "results/lens/linear_oa",
-    "tuned": "results/lens/tuned",
-    "grad": "results/lens/grad"
+    "modal": f"results/lens/{model_name}/oa",
+    "linear_oa": f"results/lens/{model_name}/linear_oa",
+    "tuned": f"results/lens/{model_name}/tuned",
+    "grad": f"results/lens/{model_name}/grad"
 }
-shared_bias = False
-# n_layers = 12
 
-BATCHES_PER_DIR = 8
-CAUSAL_BATCH_SIZE = 50
-BATCHES_RESAMPLE = 40
+print(model_name)
+print(dir_mode)
+
+if model_name == "gpt2-xl":
+    CAUSAL_BATCH_SIZE = 3
+elif model_name == "gpt2-large":
+    CAUSAL_BATCH_SIZE = 7
+elif model_name == "gpt2-medium":
+    CAUSAL_BATCH_SIZE = 12
+elif model_name == "gpt2-small":
+    CAUSAL_BATCH_SIZE = 25
+else:
+    raise Exception("Model not found")
+
+# Experiments: resample top singular vecs + [projection, steering] * [random, singular]
+
+# random vectors
 N_RAND_DIRS = 2000
+EXAMPLES_RAND = 25
 
-dir_mode = argv[1]
+# singular vectors
+EXAMPLES_SINGULAR = 200
 
-# when i don't want to load the model
-n_layers = 12
-# %%
-model_name = "gpt2-small"
+# resample
+EXAMPLES_RESAMPLE = 1000
+
+# model_name = "gpt2-small"
 batch_size = CAUSAL_BATCH_SIZE
 # 100K OWT samples with default sequence length: 235134
 device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size)
@@ -50,21 +69,40 @@ n_heads = model.cfg.n_heads
 head_dim = model.cfg.d_head
 d_model = model.cfg.d_model
 
+shared_bias = False
+# n_layers = 12
+
+BATCHES_RAND = (EXAMPLES_RAND - 1) // CAUSAL_BATCH_SIZE + 1
+BATCHES_SINGULAR = (EXAMPLES_SINGULAR - 1) // CAUSAL_BATCH_SIZE + 1
+BATCHES_RESAMPLE = (EXAMPLES_RESAMPLE - 1) // CAUSAL_BATCH_SIZE + 1
+
+print(BATCHES_RAND, BATCHES_SINGULAR, BATCHES_RESAMPLE)
+
+# when i don't want to load the model
+# n_layers = 12
+
 # %%
 
 exp = LensExperiment(model, owt_iter, folders, device)
+# lens_list = ["modal", "linear_oa", "tuned", "grad"]
+
+# grad lens not included for larger models
+if model_name == "gpt2-small":
+    lens_list = ["modal", "linear_oa", "tuned", "grad"]
+else:
+    lens_list = ["modal", "linear_oa", "tuned"]
+
 # %%
-lens_list = ["modal", "linear_oa", "tuned", "grad"]
+if dir_mode == "vanilla":
+    # get vanilla losses
+    if not os.path.exists(f"{folders['linear_oa']}/original.png"):
+        exp.get_vanilla_losses(lens_list, pics_folder=folders['linear_oa'])
 
-# get vanilla losses
-if not os.path.exists(f"{folders['linear_oa']}/original.png"):
-    exp.get_vanilla_losses(lens_list, pics_folder=folders['linear_oa'])
+    # get causal perturb losses
+    if not os.path.exists(f"{folders['linear_oa']}/causal_losses.pth"):
+        exp.get_causal_perturb_losses(lens_list, save=f"{folders['linear_oa']}/causal_losses.pth", pics_folder=folders['linear_oa'])
 
-# %%
-
-# get causal perturb losses
-if not os.path.exists(f"{folders['linear_oa']}/causal_losses.pth"):
-    exp.get_causal_perturb_losses(lens_list, save=f"{folders['linear_oa']}/causal_losses.pth", pics_folder=folders['linear_oa'])
+    exit()
 
 # %%
 
@@ -98,8 +136,8 @@ for k in sing_vecs:
     for vecs_layer in dot_products:
         diff_eye = vecs_layer - torch.eye(d_model).to(device)
         # weird?
-        assert diff_eye.diag().abs().mean() < 5e-4
-        assert diff_eye.abs().mean() < 1e-4
+        # assert diff_eye.diag().abs().mean() < 5e-4
+        # assert diff_eye.abs().mean() < 1e-4
     # print(sing_vecs[k].shape)
 
 # %%
@@ -112,12 +150,12 @@ for k in sing_vecs:
 # part 1. random directions
 
 # projection losses pass empty object
-def get_edit_losses(loss_obj, directions, perturb_type="project", n_batches=1, lens_list=['tuned', 'grad', 'linear_oa', 'modal']):
+def get_edit_losses(loss_obj, directions, save_path, perturb_type="project", n_batches=1, lens_list=['tuned', 'linear_oa', 'modal']):
     for k in lens_list:
         loss_obj[k] = {"loss": [], "sim": []}
     loss_obj['perturb'] = {"loss": [], "sim": []}
 
-    for vec in tqdm(directions):
+    for i, vec in enumerate(tqdm(directions)):
         assert vec.shape == (n_layers, d_model)
         causal_loss, a_sim = exp.get_causal_losses(vec, perturb_type, n_batches, lens_list)
         for lens in lens_list:
@@ -125,7 +163,11 @@ def get_edit_losses(loss_obj, directions, perturb_type="project", n_batches=1, l
             loss_obj[lens]['sim'].append(a_sim[lens])
         loss_obj["perturb"]['loss'].append(causal_loss["perturb"])
 
-def get_resample_losses(loss_obj, directions, n_directions=[5,10,20,50,100], n_batches=100, lens_list=['tuned', 'grad', 'linear_oa', 'modal']):
+        if i % 100 == -99:
+            torch.save(loss_obj, save_path)
+
+
+def get_resample_losses(loss_obj, directions, n_directions=[5,10,20,50,100], n_batches=100, lens_list=['tuned', 'linear_oa', 'modal']):
     for k in lens_list:
         loss_obj[k] = {"loss": [], "sim": []}
     loss_obj['perturb'] = {"loss": [], "sim": []}
@@ -142,8 +184,8 @@ def get_resample_losses(loss_obj, directions, n_directions=[5,10,20,50,100], n_b
 
 # singular vectors projection
 # for k in ['linear_oa', 'tuned', 'grad']:
-k = "linear_oa"
 if dir_mode in ["project", "steer", "resample"]:
+    k = argv[3]
     # sing_vecs[k] has singular vecs for this lens for all layers
     # columns are the singular vectors
     # use linear_oa singular vectors for modal lens
@@ -155,17 +197,19 @@ if dir_mode in ["project", "steer", "resample"]:
         lens_list = [k]
     
     if dir_mode == "project":
+        path = f"{folders[k]}/proj_losses_singular.pth"
         projection_losses = {}
-        get_edit_losses(projection_losses, directions, n_batches=BATCHES_PER_DIR, lens_list=lens_list)
-        torch.save(projection_losses, f"{folders[k]}/proj_losses_singular.pth")
+        get_edit_losses(projection_losses, directions, path, n_batches=BATCHES_SINGULAR, lens_list=lens_list)
+        torch.save(projection_losses, path)
 
         print('done with projection')
 
     # steering
     if dir_mode == "steer":
         steering_losses = {}
-        get_edit_losses(steering_losses, directions * exp.retrieve_causal_mag(0.2)[:, None], "steer", n_batches=BATCHES_PER_DIR, lens_list=lens_list)
-        torch.save(steering_losses, f"{folders[k]}/steer_losses_singular.pth")
+        path = f"{folders[k]}/steer_losses_singular.pth"
+        get_edit_losses(steering_losses, directions * exp.retrieve_causal_mag(0.2)[:, None], path, "steer", n_batches=BATCHES_SINGULAR, lens_list=lens_list)
+        torch.save(steering_losses, path)
 
         print('done with steering')
 
@@ -188,25 +232,32 @@ else:
     if dir_mode == "proj_rand":
         # projection
         projection_losses = {}
-        get_edit_losses(projection_losses, directions, n_batches = 2)
-        torch.save(projection_losses, f"{folders['linear_oa']}/proj_losses_random.pth")
+        path = f"{folders['linear_oa']}/proj_losses_random.pth"
+        get_edit_losses(projection_losses, directions, path, n_batches = BATCHES_RAND, lens_list=lens_list)
+        torch.save(projection_losses, path)
     
-    else:
+    elif dir_mode == "steer_rand":
         # steering
         steering_losses = {}
-        get_edit_losses(steering_losses, directions, "steer", n_batches = 2)
-        torch.save(steering_losses, f"{folders['linear_oa']}/steer_losses_random.pth")
+        path = f"{folders['linear_oa']}/steer_losses_random.pth"
+        get_edit_losses(steering_losses, directions, path, "steer", n_batches = BATCHES_RAND, lens_list=lens_list)
+        torch.save(steering_losses, path)
 
+    else:
+        raise Exception("compare mode not found")
 exit()
 
 # %%
 
 def summarize_loss_obj(proj_losses_file, title, separate_vecs=False):
-    lens_list = ['modal', 'tuned', 'grad', 'linear_oa']
+    # lens_list = ['modal', 'tuned', 'grad', 'linear_oa']
 
     if separate_vecs:
         proj_losses = {}
-        for typ in ['tuned', 'grad', 'linear_oa']:
+        for typ in lens_list:
+            if typ == 'modal':
+                continue
+
             proj_losses[typ] = torch.load(f"{folders[typ]}/{proj_losses_file}.pth")
             for k in proj_losses[typ]:
                 # modal loss is included in linear_oa

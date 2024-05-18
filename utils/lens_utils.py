@@ -26,9 +26,6 @@ def a_inner_prod(v1, v2, orig_dist):
 def a_sim(v1, v2, orig_dist):
     return a_inner_prod(v1, v2, orig_dist) / (a_inner_prod(v1, v1, orig_dist) * (a_inner_prod(v2, v2, orig_dist))).sqrt()
 
-def subtract_probs(v1, v2):
-    return (v1.log() - v2.log()).softmax(dim=-1)
-
 def compile_loss_dfs(all_losses, lens_losses_dfs, suffix=""):
     for k in all_losses:
         if not isinstance(all_losses[k], torch.Tensor):
@@ -170,7 +167,7 @@ class LensExperiment():
             torch.save(act_covs, f"{folder}/covs.pth")
 
         # [n_layers, d_mvn, d_model], d_mvn = d_model
-        a_mtrx = torch.stack([torch.linalg.cholesky(covs + 2e-4 * torch.eye(covs.shape[0]).to(self.device)) for covs in act_covs], dim=0)
+        a_mtrx = torch.stack([torch.linalg.cholesky(covs + 3e-4 * torch.eye(covs.shape[0]).to(self.device)) for covs in act_covs], dim=0)
 
         assert a_mtrx.isnan().sum() == 0
 
@@ -193,13 +190,14 @@ class LensExperiment():
         
         linear_lens_output = einsum("layer result activation, layer batch activation -> batch layer result", lens_weights, torch.stack(activation_storage, dim=0)) + lens_bias
         linear_lens_output = self.model.ln_final(linear_lens_output)
-        linear_lens_probs = self.model.unembed(linear_lens_output).softmax(dim=-1)
+        linear_lens_probs = self.model.unembed(linear_lens_output).log_softmax(dim=-1)
         return linear_lens_probs
 
     # oa lens: 
     def apply_oa_lens(self, batch):
         return
 
+    # returns LOGGED probs
     def apply_modal_lens(self, activation_storage, shared_bias=False):
         attn_bias = self.all_lens_bias['modal']
 
@@ -226,9 +224,10 @@ class LensExperiment():
         modal_lens_probs = self.model.unembed(resid)
 
         # [batch, n_layers, d_vocab]
-        modal_lens_probs = modal_lens_probs.softmax(dim=-1).permute((1,0,2))
+        modal_lens_probs = modal_lens_probs.log_softmax(dim=-1).permute((1,0,2))
         return modal_lens_probs
 
+    # returns LOGGED probs
     def apply_lmlp_lens(self, attn_bias, activation_storage, shared_bias=False):
         n_layers = self.model.cfg.n_layers
         
@@ -245,7 +244,7 @@ class LensExperiment():
         resid = self.model.ln_final(resid)
 
         # [batch, n_layers, d_vocab]
-        modal_lens_probs = self.model.unembed(resid).softmax(dim=-1).permute((1,0,2))
+        modal_lens_probs = self.model.unembed(resid).log_softmax(dim=-1).permute((1,0,2))
         return modal_lens_probs
 
     # std: scalar or shape [n_layers, d_model]
@@ -301,14 +300,14 @@ class LensExperiment():
                         partial(self.causal_and_save_hook_last_token, perturb_type, bsz, std[layer_no], self.act_means[layer_no], activation_storage)) 
                         for layer_no in range(n_layers)],
                     ]
-        )[:,-1].softmax(dim=-1)
+        )[:,-1].log_softmax(dim=-1)
 
         target_probs = target_probs.unflatten(0, (n_layers + 1, bsz)).permute((1,0,2))
 
         orig_probs = target_probs[:,[0]]
         target_probs = target_probs[:,1:]
 
-        perturb_loss = kl_loss(target_probs.log(), orig_probs).sum(dim=-1)
+        perturb_loss = kl_loss(target_probs, orig_probs.exp()).sum(dim=-1)
 
         return target_probs, orig_probs, [a[0] for a in activation_storage], [a[1] for a in activation_storage], perturb_loss
 
@@ -334,7 +333,7 @@ class LensExperiment():
                         partial(save_hook_last_token, activation_storage)) 
                         for layer_no in range(n_layers)],
                     ]
-            )[:,-1].softmax(dim=-1).unsqueeze(1)
+            )[:,-1].log_softmax(dim=-1).unsqueeze(1)
 
         for k in lens_list:
             if k == "modal":
@@ -348,13 +347,15 @@ class LensExperiment():
                 else:
                     orig_lens_probs = self.apply_lens(k, orig_acts)
 
-                output_losses[k] = kl_loss(lens_probs.log(), orig_lens_probs).sum(dim=-1)
-                a_sims[k] = a_sim(subtract_probs(lens_probs, orig_lens_probs), 
-                                subtract_probs(target_probs, orig_probs), orig_probs)
+                output_losses[k] = kl_loss(lens_probs, orig_lens_probs.exp()).sum(dim=-1)
+
+                # LOGGED PROBS
+                a_sims[k] = a_sim((lens_probs - orig_lens_probs).softmax(dim=-1), 
+                                (target_probs - orig_probs).softmax(dim=-1), orig_probs.exp())
                 if causal_loss:
-                    causal_losses[k] = kl_loss(lens_probs.log(), target_probs).sum(dim=-1)
+                    causal_losses[k] = kl_loss(lens_probs, target_probs.exp()).sum(dim=-1)
             else:
-                output_losses[k] = kl_loss(lens_probs.log(), target_probs).sum(dim=-1)
+                output_losses[k] = kl_loss(lens_probs, target_probs.exp()).sum(dim=-1)
 
         if causal_loss:
             return output_losses, activation_storage, a_sims, causal_losses

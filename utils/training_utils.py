@@ -15,7 +15,7 @@ from utils.data import retrieve_owt_data
 
 
 # %%
-
+    
 default_args = {
     "name": None,
     "lamb": 1e-3,
@@ -45,14 +45,23 @@ def load_args(run_type, default_lamb=None, defaults={}):
         parser.add_argument('-t', '--tau',
                             help='threshold to use for post training')
         parser.add_argument('-e', '--desc',
-                            help='description, extra parameter to pass')
+                            help='ablation type')
+        parser.add_argument('-w', '--window',
+                            help='dynamic-window',
+                            default=False,
+                            action=argparse.BooleanOptionalAction)
+        parser.add_argument('--minwindow',
+                            help='minwindow')
+        parser.add_argument('--maxwindow',
+                            help='maxwindow')
 
         args = parser.parse_args()
         args = vars(args)
 
         for k in args:
             my_args[k] = args[k]
-            if k in {"lamb", "priorscale", "priorlamb", "tau"} and my_args[k] is not None:
+            if k in {"lamb", "priorscale", "priorlamb", 
+                     "tau", "minwindow", "maxwindow"} and my_args[k] is not None:
                 # exception for manual circuit
                 if my_args[k] == "manual":
                     continue
@@ -68,7 +77,9 @@ def load_args(run_type, default_lamb=None, defaults={}):
     print(my_args["lamb"])
     parent = "results"
 
-    run_folder = my_args["dataset"] if my_args["name"] is None else f"{my_args['dataset']}_{my_args['name']}"
+    run_folder = (my_args["dataset"] if my_args["name"] is None 
+                  else f"{my_args['dataset']}/{my_args['name']}" if my_args["desc"] is None
+                  else f"{my_args['dataset']}/{my_args['desc']}/{my_args['name']}")
     if my_args["subfolder"] is not None:
         folder=f"{parent}/{run_type}/{run_folder}/{my_args['subfolder']}"
     elif my_args["priorlamb"] is not None:
@@ -332,14 +343,17 @@ def plot_no_outliers(plot_fn, alpha, x, y, ax=None, xy_line=False, args={}):
     
     if isinstance(y, torch.Tensor):
         y = torch.nan_to_num(y, nan=0, posinf=0, neginf=0).detach().cpu().flatten()
+    
+    if alpha > 0:
+        x_sat = (x > x.quantile(alpha)) * (x < x.quantile(1-alpha))
+        y_sat = (y > y.quantile(alpha)) * (y < y.quantile(1-alpha))
+        x = x[x_sat * y_sat]
+        y = y[x_sat * y_sat]
 
     plot_args = {"x": x, "y": y, "ax": ax}
     if "s" in args:
         plot_args["s"] = args["s"]
     cur_ax = plot_fn(**plot_args)
-    if alpha > 0:
-        cur_ax.set_xlim(x.quantile(alpha), x.quantile(1-alpha))
-        cur_ax.set_ylim(y.quantile(alpha), y.quantile(1-alpha))
 
     if xy_line:
         min_val = max(cur_ax.get_xlim()[0],cur_ax.get_ylim()[0])
@@ -402,6 +416,14 @@ def plot_no_outliers(plot_fn, alpha, x, y, ax=None, xy_line=False, args={}):
 #         sns.lineplot(x=[-200,200], y=[-200,200])
 #         plt.show()
 
+def clip_grads(params, bound):
+    grad_norms = []
+    for param in params:
+        grad_norm = torch.nn.utils.clip_grad_norm_(param, max_norm=float('inf'))
+        grad_norms.append(grad_norm.item())
+        torch.nn.utils.clip_grad_norm_(param, max_norm=bound)
+    return grad_norms
+
 class LinePlot:
     def __init__(self, stat_list, pref_start=100):
         self.stat_list = stat_list
@@ -461,7 +483,7 @@ class LinePlot:
         colors = ["green", "blue", "red", "orange"]
         if subplots is not None:
             rows = (len(series)-1) // subplots + 1
-            f, axes = plt.subplots(rows, subplots, figsize=(rows * 5, subplots * 5))
+            f, axes = plt.subplots(rows, subplots, figsize=(subplots * 5, rows * 5))
             
         for i,s in enumerate(series):
             if agg == 'mean':

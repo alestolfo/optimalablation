@@ -29,7 +29,7 @@ folder="results/causal_tracing"
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"
 model_name = "gpt2-xl"
-batch_size = 20
+batch_size = 5
 clip_value = 1e5
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -102,9 +102,9 @@ for batch in tqdm(data_iter):
         fwd_hooks=[
             ("hook_embed", partial(replace_subject_tokens, subject_token_pos, null_token))
         ]
-    )[torch.arange(batch_size, device=device), last_token_pos].softmax(dim=-1)
+    )[torch.arange(batch_size, device=device), last_token_pos].log_softmax(dim=-1)
 
-    loss = kl_loss(no_subject_probs.log(), target_probs).sum(dim=-1)
+    loss = kl_loss(no_subject_probs, target_probs).sum(dim=-1)
     loss = loss.mean()
     loss.backward()
 

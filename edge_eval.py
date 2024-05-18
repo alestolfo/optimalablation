@@ -29,27 +29,38 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
 # %%
-dataset = "gt"
-folder=f"results/pruning_edges_auto/{dataset}_unif"
-load_edges = False
+dataset = "ioi"
+ablation_type="cf"
+folders=[
+    f"results/pruning/{dataset}/{ablation_type}/acdc",
+    # f"results/pruning/{dataset}/{ablation_type}/eap",
+    f"results/pruning/{dataset}/{ablation_type}/hc",
+    f"results/pruning/{dataset}/{ablation_type}/unif",
+]
+load_edges = [
+    True,
+    # True,
+    False,
+    False
+]
+cf_mode = ablation_type in {"resample", "cf"}
 
 batch_size=50
-pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
+pruning_cfg = EdgeInferenceConfig(model.cfg, device, folders[0], batch_size=batch_size)
 pruning_cfg.n_samples = 1
 
 task_ds = get_task_ds(dataset, batch_size, device)
-ds_test = task_ds.get_test_set(tokenizer)
 
 for param in model.parameters():
     param.requires_grad = False
 
 # %%
 mask_sampler = ConstantMaskSampler()
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler)
+edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, counterfactual_mode=cf_mode)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
 # %%
-next_batch = partial(task_ds.next_batch, tokenizer)
-pruning_cfg.record_post_training(edge_pruner, ds_test, next_batch, load_edges=load_edges)
+next_batch = partial(task_ds.retrieve_batch_cf, tokenizer, ablation_type, test=True)
+pruning_cfg.record_post_training(folders, edge_pruner, next_batch, ablation_type, load_edges=load_edges)
 # %%

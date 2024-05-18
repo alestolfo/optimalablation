@@ -27,16 +27,28 @@ from training_utils import LinePlot
 # %%
 
 task_name = "ioi"
-folders=[
-    ({
-        # "vertex": f"results/pruning_vertices_auto/{task_name}", 
-        # "edges HC": f"results/pruning_edges_auto/{task_name}_edges", 
-        # "edges HC (vertex prior)": f"results/pruning_edges_auto/{task_name}_vertex_prior", 
-        "edges uniform": f"results/pruning_edges_auto/{task_name}_unif", 
-        "acdc": f"results_baseline/acdc_{task_name}_runs",
-        "eap": f"results_baseline/eap_{task_name}_runs"
-    }),
-]
+folders= {"ioi":
+    {
+        # "vertex": "results/pruning_vertices_auto/ioi", 
+        # "edges HC": "results/pruning_edges_auto/ioi_edges", 
+        # "edges HC (vertex prior)": "results/pruning_edges_auto/ioi_vertex_prior", 
+        # "edges uniform": "results/pruning_edges_auto/ioi_unif", 
+        "edges dynamic-0.3": "results/pruning_edges_auto/ioi_dynamic_unif", 
+        "edges dynamic-0.5": "results/pruning_edges_auto/ioi_dynamic_unif-0.5", 
+        "edges dynamic-0.99": "results/pruning_edges_auto/ioi_dynamic_unif-0.99", 
+        # "edges uniform window": "results/pruning_edges_auto/ioi_unif_window", 
+        "ACDC": "results/pruning_edges_auto/ioi_acdc",
+        # "eap": "results/pruning_edges_auto/ioi_eap"
+    },
+    "gt": {
+        # "vertex": "results/pruning_vertices_auto/gt", 
+        # "edges HC": "results/pruning_edges_auto/gt_edges", 
+        # "edges HC (vertex prior)": "results/pruning_edges_auto/gt_vertex_prior", 
+        "edges uniform": "results/pruning_edges_auto/gt_unif", 
+        "ACDC": "results/pruning_edges_auto/gt_acdc",
+        # "eap": "results/pruning_edges_auto/gt_eap"
+    }
+}[task_name]
 out_folder = f"results/similarities/{task_name}"
 
 # %%
@@ -60,59 +72,59 @@ out_folder = f"results/similarities/{task_name}"
 tau = -1
 training_dfs = {}
 all_masks = {}
-for task in folders:
-    for k in task:
-        folder = task[k]
-        print(folder)
-        if os.path.exists(f"{folder}/post_training.pkl"):
-            with open(f"{folder}/post_training.pkl", "rb") as f:
-                post_training = pickle.load(f)
-                del post_training['vertices']
-                post_training_df = pd.DataFrame(post_training)
-                training_dfs[k] = post_training_df
-        for lamb_path in glob.glob(f"{folder}/*"):
-            lamb = lamb_path.split("/")[-1]
-            print(lamb_path)
-            try:
-                float(lamb[-1])
-                print(lamb[0])
-                float(lamb[0])
-                if k == "acdc" or k == "eap":
-                    prune_mask = torch.load(f"{folder}/edges_{lamb}.pth")
-                    prune_mask = edges_to_mask(prune_mask)
-                else:
-                    if len(glob.glob(f"{lamb_path}/fit_modes_*.pth")) == 0:
-                        continue
-                    prune_mask = retrieve_mask(lamb_path)
-                    prune_mask = discretize_mask(prune_mask, tau)
-            except:
-                print(lamb)
-                if lamb == "manual":
-                    prune_mask = torch.load(f"{folder}/edges_{lamb}.pth")
-                    prune_mask = edges_to_mask(prune_mask)
-
-                    # ioi_nodes = get_ioi_nodes()
-                    # prune_mask = nodes_to_mask(ioi_nodes)
-                else:
+task = folders
+for k in task:
+    folder = task[k]
+    print(folder)
+    if os.path.exists(f"{folder}/post_training.pkl"):
+        with open(f"{folder}/post_training.pkl", "rb") as f:
+            post_training = pickle.load(f)
+            del post_training['vertices']
+            post_training_df = pd.DataFrame(post_training)
+            training_dfs[k] = post_training_df
+    for lamb_path in glob.glob(f"{folder}/*"):
+        lamb = lamb_path.split("/")[-1]
+        print(lamb_path)
+        try:
+            float(lamb[-1])
+            print(lamb[0])
+            float(lamb[0])
+            if k == "acdc" or k == "eap":
+                prune_mask = torch.load(f"{folder}/edges_{lamb}.pth")
+                prune_mask = edges_to_mask(prune_mask)
+            else:
+                if len(glob.glob(f"{lamb_path}/fit_modes_*.pth")) == 0:
                     continue
-            if (k == "vertex"):
-                print(prune_mask.keys())
-                prune_mask = nodes_to_mask(mask_to_nodes(prune_mask, mask_type="nodes")[0], all_mlps=False)
-                print(prune_mask.keys())
+                prune_mask = retrieve_mask(lamb_path)
+                prune_mask = discretize_mask(prune_mask, tau)
+        except:
+            print(lamb)
+            if lamb == "manual":
+                prune_mask = torch.load(f"{folder}/edges_{lamb}.pth")
+                prune_mask = edges_to_mask(prune_mask)
 
+                # ioi_nodes = get_ioi_nodes()
+                # prune_mask = nodes_to_mask(ioi_nodes)
+            else:
+                continue
+        if (k == "vertex"):
             print(prune_mask.keys())
-            prune_mask, _, c_e, attn_ct, mlp_ct = prune_dangling_edges(prune_mask)
-            print(lamb_path)
+            prune_mask = nodes_to_mask(mask_to_nodes(prune_mask, mask_type="nodes")[0], all_mlps=False)
+            print(prune_mask.keys())
 
-            loss = None
-            if k in training_dfs:
-                lamb_rows = training_dfs[k][(training_dfs[k]['lamb'] == lamb)]
-                if len(lamb_rows[lamb_rows['tau'] == tau]) > 0:
-                    loss = lamb_rows[lamb_rows['tau'] == tau].iloc[0]['losses']
-                elif len(lamb_rows) > 0:
-                    loss = lamb_rows.iloc[0]['losses']
+        print(prune_mask.keys())
+        prune_mask, _, c_e, attn_ct, mlp_ct = prune_dangling_edges(prune_mask)
+        print(lamb_path)
 
-            all_masks[lamb_path] = (c_e, prune_mask, attn_ct, mlp_ct, loss)
+        loss = None
+        if k in training_dfs:
+            lamb_rows = training_dfs[k][(training_dfs[k]['lamb'] == lamb)]
+            if len(lamb_rows[lamb_rows['tau'] == tau]) > 0:
+                loss = lamb_rows[lamb_rows['tau'] == tau].iloc[0]['losses']
+            elif len(lamb_rows) > 0:
+                loss = lamb_rows.iloc[0]['losses']
+
+        all_masks[lamb_path] = (c_e, prune_mask, attn_ct, mlp_ct, loss)
 
 # %%
 def get_mask_smiliarities(all_masks, output_folder):

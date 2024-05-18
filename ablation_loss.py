@@ -98,30 +98,7 @@ def save_snapshot(head_losses, head_vars):
 
 # %%
 for no_batches in tqdm(range(max_batches)):
-    if ablation_type == "cf":
-        batch, last_token_pos, cf = task_ds.next_batch(tokenizer, counterfactual=True)
-    else:
-        batch, last_token_pos = task_ds.next_batch(tokenizer)
-
-    if ablation_type == "resample":
-        permutation = torch.randperm(batch.shape[0])
-
-        # make sure all prompts are resampled
-        while (permutation == torch.arange(batch.shape[0])).sum() > 0:
-            permutation = torch.randperm(batch.shape[0])
-        permutation = permutation.to(device)
-
-        cf = batch[permutation]
-        # if resampled sequence i shorter than original sequence, move padding to left
-        padding_left = last_token_pos - last_token_pos[permutation]
-        for i in range(batch.shape[0]):
-            if padding_left[i] > 0:
-                cf[i] = torch.cat((cf[i,-padding_left[i]:], cf[i, :-padding_left[i]]), dim=-1)
-
-        # print(batch)
-        # print(cf)
-        # break
-    last_token_pos = last_token_pos.int()
+    batch, last_token_pos, cf = task_ds.retrieve_batch_cf(tokenizer, ablation_type)
 
     if oca_train:
         modal_optimizer.zero_grad()

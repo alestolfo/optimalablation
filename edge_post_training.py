@@ -24,8 +24,12 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
 # %%
-args = load_args("pruning_edges_auto", 2e-4)
-folder, reg_lamb, dataset, tau, run_name = args["folder"], args["lamb"], args["dataset"], args["tau"], args["name"]
+args = load_args("pruning", 2e-4)
+folder, reg_lamb, dataset, tau, run_name, ablation_type = args["folder"], args["lamb"], args["dataset"], args["tau"], args["name"], args["desc"]
+print("Folder", folder)
+print("Lamb", reg_lamb)
+print("Dataset", dataset)
+print("Ablation type", ablation_type)
 
 gpu_requeue = True
 # reset_optim = 1000

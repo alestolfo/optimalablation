@@ -21,7 +21,7 @@ class EdgePruner(torch.nn.Module):
                  mask_sampler, 
                  parallel_inference=False, 
                  cache_compressed_attn=True, 
-                 ablation_backward=False
+                 counterfactual_mode=False
                  ):
         super().__init__()
         self.base_model = model
@@ -30,16 +30,22 @@ class EdgePruner(torch.nn.Module):
         self.circs = ["q", "k", "v"]
 
         init_modes_attention, init_modes_mlp = init_modes
-        self.modal_attention = torch.nn.Parameter(init_modes_attention)
-        self.modal_mlp = torch.nn.Parameter(init_modes_mlp)
+
+        if not counterfactual_mode:
+            self.modal_attention = torch.nn.Parameter(init_modes_attention)
+            self.modal_mlp = torch.nn.Parameter(init_modes_mlp)
+        else:
+            self.modal_attention = None 
+            self.modal_mlp = None
+        
         self.attention_cache = []
         self.mlp_cache = []
+        self.cf_attention_cache = []
+        self.cf_mlp_cache = []
         self.cache_compressed_attn = cache_compressed_attn
         self.parallel_inference = parallel_inference
-        self.ablation_backward = ablation_backward
 
         self.disable_hooks = False
-        self.disable_pruning_hooks = False
 
         if not self.cache_compressed_attn:
             model.cfg.use_attn_result = True
@@ -57,6 +63,9 @@ class EdgePruner(torch.nn.Module):
         self.patching_hooks = self.get_patching_hooks()
 
         self.last_token_mask = None
+
+        # use counterfactuals for resample and cf ablation
+        self.counterfactual_mode = counterfactual_mode
         
     def set_log(self, log):
         self.log = log
@@ -68,18 +77,48 @@ class EdgePruner(torch.nn.Module):
     def add_patching_hooks(self):
         for name, hook in self.patching_hooks.values():
             self.base_model.add_hook(name, hook)
-
-    def cache_hook_all_tokens(self, storage, activations, hook):
+    
+    def cache_hook_attention_all_tokens(self, activations, hook):
         if self.disable_hooks:
             return
+
+        bsz = self.pruning_cfg.batch_size
+        squeeze_activations = 0
+
+        # if counterfactual mode, then first bsz are counterfact
+        if self.counterfactual_mode:
+            self.cf_attention_cache.append(activations[:bsz])
+            squeeze_activations = bsz
         
+        # if parallel inference, then next bsz are original
         if self.parallel_inference:
-            bsz = self.pruning_cfg.batch_size
-            storage.append(activations[bsz:])
-            return activations[:bsz]
-        else:
-            storage.append(activations)
-            return activations
+            squeeze_activations += bsz
+        
+        self.attention_cache.append(activations[squeeze_activations:])
+        
+        # need to return 1 input to continue inference, even if we don't need it
+        return activations[:max(1, squeeze_activations)]
+        
+    def cache_hook_mlp_all_tokens(self, activations, hook):
+        if self.disable_hooks:
+            return
+
+        bsz = self.pruning_cfg.batch_size
+        squeeze_activations = 0
+
+        # if counterfactual mode, then first bsz are counterfact
+        if self.counterfactual_mode:
+            self.cf_mlp_cache.append(activations[:bsz])
+            squeeze_activations = bsz
+        
+        # if parallel inference, then next bsz are original
+        if self.parallel_inference:
+            squeeze_activations += bsz
+        
+        self.mlp_cache.append(activations[squeeze_activations:])
+
+        # do inference on one example
+        return activations[:max(1, squeeze_activations)]
 
     # attention_constants: list of all constants for attention for layers thus far
     # mlp_constants: list of all constants for embed+mlp layers thus far
@@ -90,12 +129,12 @@ class EdgePruner(torch.nn.Module):
             return orig_in
 
         def prepend_orig(out):
-            if self.parallel_inference:
-                return torch.cat([orig_in[:self.pruning_cfg.batch_size], out], dim=0)
-            # return out
+            if self.parallel_inference or self.counterfactual_mode:
+                out = torch.cat([orig_in, out], dim=0)
 
             # do not modify inference on BOS token
-            return torch.cat([orig_in[:,[0]].detach(), out[:,1:]], dim=1)
+            out[:,[0]] = orig_in[0,[0]]
+            return out
         # i is the current layer (0-indexed, equal to the number of layers before this one)
         # orig_in: batch x seq_pos x d_model
         # prune_mask[0]: (bsz * n_samples) x n_heads (dest) x i x n_heads (source)
@@ -105,31 +144,44 @@ class EdgePruner(torch.nn.Module):
         # mlp_constants: (i+1) x d_model
         # mlp_cache: (i+1) * [(bsz * n_samples) x seq_pos x d_model]
 
-        # mlp_mask: (bsz * n_samples) x 1 (seq_pos) x n_heads (dest) x i x 1 (d_model)
         try:
+            # mlp_mask: (bsz * n_samples) x 1 (seq_pos) x n_heads (dest) x i x 1 (d_model)
             mlp_mask = self.mask_sampler.sampled_mask["mlp-attn"][layer_no][:,circ_idx].unsqueeze(1).unsqueeze(-1)
             
             out = (mlp_mask * torch.stack(self.mlp_cache, dim=-2).unsqueeze(dim=2)).sum(dim=-2)
             # print((out-orig_in).square().sum())
 
-            if not self.ablation_backward:
-                out = out + (
-                    (mlp_mask < 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1]
-                    + (mlp_mask >= 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1].detach()
-                ).sum(dim=-2)
+            if self.counterfactual_mode:
+                # bsz x seq_pos x 1 (dest_heads) x i x (d_model)
+                null_mlp = torch.stack(self.cf_mlp_cache, dim=-2).unsqueeze(dim=2).detach()
+                null_mlp = null_mlp.repeat((self.pruning_cfg.n_samples, *[1 for _ in null_mlp.shape[1:]]))
+            else:
+                null_mlp = self.modal_mlp[:layer_no+1]
+
+            out = out + (
+                (mlp_mask < 0.001) * (1-mlp_mask) * null_mlp
+                + (mlp_mask >= 0.001) * (1-mlp_mask) * null_mlp.detach()
+            ).sum(dim=-2)
 
             if layer_no == 0:
                 return prepend_orig(out)
+            
+            if self.counterfactual_mode:
+                # bsz x seq_pos x 1 (dest_heads) x i x n_heads x (d_model or d_head)
+                null_attn = torch.stack(self.cf_attention_cache, dim=-3).unsqueeze(dim=2).detach()
+                null_attn = null_attn.repeat((self.pruning_cfg.n_samples, *[1 for _ in null_attn.shape[1:]]))
+            else:
+                null_attn = self.modal_attention[:layer_no]
             
             # print(len(self.mask_sampler.sampled_mask["attn-attn"]))
             # print(layer_no)
             # print((self.mask_sampler.sampled_mask["attn-attn"][layer_no].shape))
 
-            # (bsz * n_samples) x 1 (seq_pos) x n_heads (dest) x i x n_heads (source) x 1 (d_model/d_head)
+            # attn_mask: (bsz * n_samples) x 1 (seq_pos) x n_heads (dest) x i x n_heads (source) x 1 (d_model/d_head)
             attn_mask = self.mask_sampler.sampled_mask["attn-attn"][layer_no][:,circ_idx].unsqueeze(1).unsqueeze(-1)
             attn_term = attn_mask * torch.stack(self.attention_cache, dim=-3).unsqueeze(dim=2) + (
-                (attn_mask < 0.001) * (1-attn_mask) * self.modal_attention[:layer_no]
-                + (attn_mask >= 0.001) * (1-attn_mask) * self.modal_attention[:layer_no].detach()
+                (attn_mask < 0.001) * (1-attn_mask) * null_attn
+                + (attn_mask >= 0.001) * (1-attn_mask) * null_attn.detach()
             )
 
             # W_O: source_head x d_head x d_model
@@ -150,16 +202,8 @@ class EdgePruner(torch.nn.Module):
             print(mlp_mask.shape)
             print(attn_mask.shape)
             raise e
-
-        if self.ablation_backward:
-            # IS THIS WHY ITERATIVE DIDN'T WORK? opt point isn't weighted by (1-x)
-            return prepend_orig(out + self.modal_attention[layer_no])
         
         return prepend_orig(out)
-        # return prepend_orig(out + (
-        #     (attn_mask < 0.001) * (1-attn_mask) * self.modal_attention[:layer_no]
-        #     + (attn_mask >= 0.001) * (1-attn_mask) * self.modal_attention[:layer_no].detach()
-        # ).sum(dim=[-3,-2]))
 
     # same as attentions except not parallelized
     # attention_constants: list of all constants for attention for layers thus far
@@ -167,17 +211,20 @@ class EdgePruner(torch.nn.Module):
     # attention_cache: contains all attentions stored thus far, list of attention outputs by later
     # mlp_cache: list of mlp outputs by layer
     def pruning_edge_mlp_hook_all_tokens(self, layer_no, orig_in, hook): 
-        if self.disable_hooks or self.disable_pruning_hooks:
+        if self.disable_hooks:
             return orig_in
             
         def prepend_orig(out):
-            if self.parallel_inference:
-                return torch.cat([orig_in[:self.pruning_cfg.batch_size], out], dim=0)
-            # return out
-
+            if self.parallel_inference or self.counterfactual_mode:
+                out = torch.cat([orig_in, out], dim=0)
+            
             # do not modify inference on BOS token
-            return torch.cat([orig_in[:,[0]].detach(), out[:,1:]], dim=1)
-        
+            out[:,[0]] = orig_in[0,[0]]
+            return out
+
+        n_layers = self.base_model.cfg.n_layers
+        attn_layers_before = min(layer_no+1,n_layers)
+
         # i is the current layer (0-indexed, equal to the number of layers before this one)
         # orig_in: batch x seq_pos x d_model
         # prune_mask[0]: (bsz * n_samples) x i x n_heads
@@ -187,27 +234,38 @@ class EdgePruner(torch.nn.Module):
         # mlp_constants: (i+1) x d_model
         # mlp_cache: (i+1) * [(bsz * n_samples) x seq_pos x d_model]
 
-        # (bsz * n_samples) x 1 (seq_pos) x i x 1 (d_model)
         try:
-            n_layers = self.base_model.cfg.n_layers
-            attn_layers_before = min(layer_no+1,n_layers)
+            if self.counterfactual_mode:
+                # bsz x seq_pos x i x 1 (d_model)
+                null_mlp = torch.stack(self.cf_mlp_cache, dim=2).detach()
+                null_mlp = null_mlp.repeat((self.pruning_cfg.n_samples, *[1 for _ in null_mlp.shape[1:]]))
+            else:
+                null_mlp = self.modal_mlp[:layer_no+1]
+
+            # (bsz * n_samples) x 1 (seq_pos) x i x 1 (d_model)
             mlp_mask = self.mask_sampler.sampled_mask["mlp-mlp"][layer_no].unsqueeze(1).unsqueeze(-1)
 
             out = (mlp_mask * torch.stack(self.mlp_cache, dim=2)).sum(dim=2)
 
-            if not self.ablation_backward:
-                out = out + (
-                    (mlp_mask < 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1]
-                    + (mlp_mask >= 0.001) * (1-mlp_mask) * self.modal_mlp[:layer_no+1].detach()
-                ).sum(dim=2)
+            out = out + (
+                (mlp_mask < 0.001) * (1-mlp_mask) * null_mlp
+                + (mlp_mask >= 0.001) * (1-mlp_mask) * null_mlp.detach()
+            ).sum(dim=2)
+
+            # bsz x seq_pos x i x (d_model or d_head)
+            if self.counterfactual_mode:
+                null_attn = torch.stack(self.cf_attention_cache, dim=-3).detach()
+                null_attn = null_attn.repeat((self.pruning_cfg.n_samples, *[1 for _ in null_attn.shape[1:]]))
+            else:
+                null_attn = self.modal_attention[:attn_layers_before]
 
             # print((out - mlp_cache[0]).square().sum())
             
-            # (bsz * n_samples) x 1 (seq_pos) x i x n_heads x 1 (d_model)
+            # (bsz * n_samples) x 1 (seq_pos) x i x n_heads x 1 (d_model or d_head)
             attn_mask = self.mask_sampler.sampled_mask["attn-mlp"][layer_no].unsqueeze(1).unsqueeze(-1)
             attn_term = attn_mask * torch.stack(self.attention_cache, dim=-3) + (
-                (attn_mask < 0.001) * (1-attn_mask) * self.modal_attention[:attn_layers_before]
-                + (attn_mask >= 0.001) * (1-attn_mask) * self.modal_attention[:attn_layers_before].detach()
+                (attn_mask < 0.001) * (1-attn_mask) * null_attn
+                + (attn_mask >= 0.001) * (1-attn_mask) * null_attn.detach()
             )
 
             # W_O: source_head x d_head x d_model
@@ -228,9 +286,6 @@ class EdgePruner(torch.nn.Module):
             print(attn_mask.shape)
             print(mlp_mask.shape)
             raise e
-
-        if self.ablation_backward:
-            return prepend_orig(out + self.modal_mlp[layer_no])
         
         return prepend_orig(out)
 
@@ -241,6 +296,8 @@ class EdgePruner(torch.nn.Module):
         else:
             # CONVENTION: since we repeat the batch tokens n_samples times, the correct unflattened shape for embeddings is [n_samples, batch_size, seq, d_model]
             out = out.unflatten(0, (-1, self.pruning_cfg.batch_size))
+            if self.counterfactual_mode:
+                out = out[1:]
         out = (out * self.last_token_mask.unsqueeze(-1)).sum(dim=2)
         return out
 
@@ -254,10 +311,8 @@ class EdgePruner(torch.nn.Module):
 
         return {
             # cache embedding
-            "cache_embed": 
-            (embed_filter, 
-            partial(self.cache_hook_all_tokens, 
-                    self.mlp_cache)),
+            "cache_embed": (embed_filter, 
+                            self.cache_hook_mlp_all_tokens),
 
             # cache attention (at z if compressed)
             **{
@@ -265,15 +320,14 @@ class EdgePruner(torch.nn.Module):
                 (partial(attention_compressed_filter 
                          if self.cache_compressed_attn 
                          else attention_points_filter, layer_no), 
-                partial(self.cache_hook_all_tokens, self.attention_cache)) 
+                self.cache_hook_attention_all_tokens) 
                 for layer_no in range(n_layers)
             },
 
             # cache MLP
             **{
-                f"cache_mlp_{layer_no}": 
-                (partial(mlp_points_filter, layer_no), 
-                partial(self.cache_hook_all_tokens, self.mlp_cache)) 
+                f"cache_mlp_{layer_no}": (partial(mlp_points_filter, layer_no), 
+                                          self.cache_hook_mlp_all_tokens)
                 for layer_no in range(n_layers)
             }
         }
@@ -350,22 +404,19 @@ class EdgePruner(torch.nn.Module):
         self.attention_cache.clear()
         self.mlp_cache.clear()
 
+        if self.counterfactual_mode:
+            self.cf_attention_cache.clear()
+            self.cf_mlp_cache.clear()
+
         with torch.no_grad():
             last_token_mask = torch.zeros_like(batch).to(self.pruning_cfg.device)
             last_token_mask[torch.arange(last_token_mask.shape[0]), last_token_pos] = 1
         self.last_token_mask = last_token_mask
-
-    def run_cache(self, batch, last_token_pos):
-        self.setup_inference(batch, last_token_pos)
-
-        self.disable_pruning_hooks = True
-        self.base_model(batch)
-        self.disable_pruning_hooks = False
-
+    
     # graph_suffix: current time, pass if we want to plot a histogram of KL loss, mask params
     # return output: just return the model output
     # separate loss: separate KL and mask loss
-    def forward(self, batch, last_token_pos, graph_suffix=None, return_output=False, timing=True, print_loss=True, separate_loss=False):
+    def forward(self, batch, last_token_pos, counterfactual=None, graph_suffix=None, return_output=False, timing=True, print_loss=True, separate_loss=False):
         if timing:
             end = []
             for x in range(6):
@@ -384,8 +435,15 @@ class EdgePruner(torch.nn.Module):
             end[1].record()
         
         # CONVENTION: since we repeat the batch tokens n_samples times, the correct unflattened shape for embeddings is [n_samples, batch_size, seq, d_model]
+
+        model_input = batch.repeat(n_samples+(1 if self.parallel_inference else 0),1)
+        if self.counterfactual_mode:
+            if counterfactual is None:
+                raise Exception("Expected counterfactual")
+            model_input = torch.cat([counterfactual, model_input], dim=0)
+        
         pruned_output = self.base_model(
-            batch.repeat(n_samples+(1 if self.parallel_inference else 0),1)
+            model_input
         ).log_softmax(dim=-1)
 
         if timing:

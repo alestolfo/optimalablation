@@ -8,6 +8,7 @@ from einops import rearrange
 import math
 from functools import partial
 import torch.optim
+from sys import argv
 import time
 import pandas as pd 
 import seaborn as sns
@@ -19,15 +20,17 @@ from utils.lens_utils import LensExperiment
 
 # %%
 sns.set()
-modal_lens_folder="results/modal_lens/random_init"
-lm_lens_folder="results/modal_lens/linear_oca"
-tuned_lens_folder = "results/tuned_lens"
-folder="results/modal_lens/grad_baseline"
+
+model_name = "gpt2-xl"
+folder=f"results/lens/{model_name}/grad"
 shared_bias = False
 
 # %%
-model_name = "gpt2-small"
-batch_size = 40
+if model_name == "gpt2-xl":
+    batch_size = 2
+elif model_name == "gpt2-medium":
+    batch_size = 5
+
 device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size)
 
 n_layers = model.cfg.n_layers
@@ -122,7 +125,7 @@ tuned_loss_series = [f"kl_loss_{k}" for k in range(n_layers)]
 lp = LinePlot([*tuned_loss_series, 'step_size'])
     
 i = 0
-for i in tqdm(range(50000)):
+for i in tqdm(range(20000)):
     batch = next(owt_iter)['tokens']
     lens_optimizer.zero_grad()
 
@@ -139,7 +142,7 @@ for i in tqdm(range(50000)):
 
     lens_probs = exp.apply_lens('grad', activation_storage)
 
-    kl_losses = kl_loss(lens_probs.log(), model_probs).sum(dim=-1).mean(dim=0)
+    kl_losses = kl_loss(lens_probs, model_probs).sum(dim=-1).mean(dim=0)
     
     loss = kl_losses.sum()
     loss.backward()

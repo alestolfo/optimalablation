@@ -106,7 +106,7 @@ def apply_oa_tokenwise_lens(self, activation_storage, seq_len):
     modal_lens_probs = self.model.unembed(resid)
 
     # [batch, n_layers, d_vocab]
-    modal_lens_probs = modal_lens_probs.softmax(dim=-1)[:,-1].unflatten(0, (n_layers, bsz)).permute((1,0,2))
+    modal_lens_probs = modal_lens_probs.log_softmax(dim=-1)[:,-1].unflatten(0, (n_layers, bsz)).permute((1,0,2))
 
     return modal_lens_probs
 
@@ -129,7 +129,7 @@ for i in tqdm(range(lp.t, 50000)):
         
     modal_lens_probs = apply_oa_tokenwise_lens(exp, activation_storage, batch.shape[-1])
 
-    kl_losses = kl_loss(modal_lens_probs.log(), model_probs).sum(dim=-1).mean(dim=0)
+    kl_losses = kl_loss(modal_lens_probs, model_probs).sum(dim=-1).mean(dim=0)
     loss = kl_losses.sum()
 
     loss.backward()

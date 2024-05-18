@@ -11,16 +11,29 @@ import torch.optim
 import time
 import seaborn as sns
 import matplotlib.pyplot as plt
+from sys import argv
 import pickle
-from utils.lens_utils import apply_lens
+from utils.lens_utils import LensExperiment
 from utils.training_utils import load_model_data, save_hook_last_token, LinePlot
 
 # %%
 sns.set()
-folder="results/tuned_lens"
 # model_name = "EleutherAI/pythia-70m-deduped"
-model_name = "gpt2-small"
-batch_size = 200
+# model_name = "gpt2-medium"
+model_name = argv[1]
+folder=f"results/lens/{model_name}/tuned"
+
+if model_name == "gpt2-xl":
+    batch_size = 40
+elif model_name == "gpt2-large":
+    batch_size = 60
+elif model_name == "gpt2-medium":
+    batch_size = 80
+elif model_name == "gpt2-small":
+    batch_size = 150
+else:
+    raise Exception("Model not found")
+
 device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size)
 
 # inverse probe setting
@@ -34,6 +47,8 @@ lr = 1e-2
 kl_loss = torch.nn.KLDivLoss(reduction="none")
 
 resid_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_resid_pre"
+
+exp = LensExperiment(model, owt_iter, {}, device, pretrained=False)
 
 # %%
 
@@ -49,13 +64,17 @@ for p in lens_weights:
 
 for p in lens_bias:
     p.register_hook(lambda grad: torch.nan_to_num(grad, nan=0, posinf=0, neginf=0))
+
+exp.all_lens_weights['tuned'] = lens_weights
+exp.all_lens_bias['tuned'] = lens_bias
+
 # %%
 
 tuned_loss_series = [f"kl_loss_{k}" for k in range(n_layers)]
 lp = LinePlot([*tuned_loss_series, 'step_size'])
     
 i = 0
-for i in tqdm(range(50000)):
+for i in tqdm(range(30000)):
     batch = next(owt_iter)['tokens']
     lens_optimizer.zero_grad()
 
@@ -70,10 +89,9 @@ for i in tqdm(range(50000)):
                 ]
     )[:,-1].softmax(dim=-1).unsqueeze(1)
 
-    lens_probs = apply_lens(model, lens_weights, lens_bias, activation_storage)
+    lens_probs = exp.apply_lens("tuned", activation_storage)
 
-    kl_losses = kl_loss(lens_probs.log(), model_probs).sum(dim=-1).mean(dim=0)
-    
+    kl_losses = kl_loss(lens_probs, model_probs).sum(dim=-1).mean(dim=0)
     loss = kl_losses.sum()
     loss.backward()
 

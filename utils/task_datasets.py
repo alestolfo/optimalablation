@@ -24,6 +24,38 @@ from utils.datasets.ioi.ioi_dataset import IOIDataset
 from utils.datasets.greater_than.utils import get_valid_years
 from utils.datasets.greater_than.data import YearDataset
 
+class TaskDataset():
+    def __init__(self, batch_size, device):
+        self.batch_size = batch_size
+        self.device = device
+
+    def next_batch(self, tokenizer, test=False, counterfactual=False):
+        return None, None, None
+
+    def retrieve_batch_cf(self, tokenizer, ablation_type, test=False):
+        cf = None
+        if ablation_type == "cf":
+            batch, last_token_pos, cf = self.next_batch(tokenizer, test=test, counterfactual=True)
+        else:
+            batch, last_token_pos = self.next_batch(tokenizer, test=test)
+
+        if ablation_type == "resample":
+            permutation = torch.randperm(batch.shape[0])
+
+            # make sure all prompts are resampled
+            while (permutation == torch.arange(batch.shape[0])).sum() > 0:
+                permutation = torch.randperm(batch.shape[0])
+            permutation = permutation.to(self.device)
+
+            cf = batch[permutation]
+            # if resampled sequence i shorter than original sequence, move padding to left
+            padding_left = last_token_pos - last_token_pos[permutation]
+            for i in range(batch.shape[0]):
+                if padding_left[i] > 0:
+                    cf[i] = torch.cat((cf[i,-padding_left[i]:], cf[i, :-padding_left[i]]), dim=-1)
+        
+        return batch, last_token_pos.int(), cf
+        
 class OWTConfig():
     def __init__(self, owt_iter, device):
         self.ds_iter = owt_iter
@@ -43,10 +75,9 @@ class OWTConfig():
         batch = next(self.ds_iter)['tokens'].to(self.device)
         return batch, batch.shape[1] - 1
     
-class IOIConfigDiverse():
+class IOIConfigDiverse(TaskDataset):
     def __init__(self, batch_size, device, test_size=10000):
-        self.batch_size = batch_size
-        self.device = device
+        super().__init__(batch_size, device)
         
         ioi_ds = datasets.load_from_disk("../plausibleablation/data/ioi/ioi")
 
@@ -58,24 +89,19 @@ class IOIConfigDiverse():
 
         self.ds_iter = ioi_iter
         self.ds_test = DataLoader(test_set, batch_size=batch_size)
-    
-    def get_test_set(self, tokenizer):
-        return self.ds_test
-    
+        self.test_iter = cycle(iter(self.ds_test))
+        
     def init_modes(self):
         with open("results/oca/ioi/means_attention.pkl", "rb") as f:
-            # n_layers x n_heads x d_model
+            #  n_layers x 10 (seq_len) x n_heads x d_head
             init_modes_attention = pickle.load(f)
         with open("results/oca/ioi/means_mlp.pkl", "rb") as f:
-            # n_layers x n_heads x d_model
+            #  n_layers x 10 (seq_len) x d_model
             init_modes_mlp = pickle.load(f)
         return init_modes_attention[:,-1], init_modes_mlp[:,-1]
 
-    def next_batch(self, tokenizer, test_batch=None, counterfactual=False):
-        if test_batch is not None:
-            b = test_batch
-        else:
-            b = next(self.ds_iter)
+    def next_batch(self, tokenizer, test=False, counterfactual=False):
+        b = next(self.test_iter if test else self.ds_iter)
 
         # remove label, it can be more than one token
         # batch = [s.rsplit(' ', 1)[0] for s in b['ioi_sentences']]
@@ -91,25 +117,13 @@ class IOIConfigDiverse():
         
         return batch, last_token_pos
 
-class IOIConfig():
-    def __init__(self, batch_size, device, test_size=10000, fix_prompt=False):
-        self.batch_size = batch_size
-        self.device = device
+class IOIConfig(TaskDataset):
+    def __init__(self, batch_size, device, fix_prompt=False):
+        super().__init__(batch_size, device)
 
-        self.test_size = test_size
         self.seed = 0
         self.fix_prompt = fix_prompt
         
-    def get_test_set(self, tokenizer):
-        test_set = IOIDataset(
-            prompt_type="ABBA",
-            N=self.test_size,
-            nb_templates=None,
-            seed = 239405930245,
-        ).toks
-        self.ds_test = DataLoader(test_set, batch_size=self.batch_size)
-        return self.ds_test
-
     def init_modes(self, cf=False):
         if cf:
             cf_tag = "cf_"
@@ -117,27 +131,24 @@ class IOIConfig():
             cf_tag = ""
 
         with open(f"results/oca/ioi/means_{cf_tag}attention.pkl", "rb") as f:
-            # n_layers x n_heads x d_model
+            #  n_layers x 10 (seq_len) x n_heads x d_head
             init_modes_attention = pickle.load(f)
         with open(f"results/oca/ioi/means_{cf_tag}mlp.pkl", "rb") as f:
-            # n_layers x n_heads x d_model
+            # n_layers x 10 (seq_len) x d_model
             init_modes_mlp = pickle.load(f)
         return init_modes_attention[:,-1], init_modes_mlp[:,-1]
 
-    def next_batch(self, tokenizer, test_batch=None, counterfactual=False):
-        if test_batch is not None:
-            batch = test_batch
-        else:
-            ioi_dataset = IOIDataset(
-                prompt_type="ABBA",
-                N=self.batch_size,
-                # if fix prompt, output only one prompt template per batch to enable resamples
-                nb_templates=random.randint(1,15) if self.fix_prompt else None,
-                single_template=self.fix_prompt,
-                seed=self.seed
-            )
-            self.seed += 1
-            batch = ioi_dataset.toks
+    def next_batch(self, tokenizer, test=False, counterfactual=False):
+        ioi_dataset = IOIDataset(
+            prompt_type="ABBA",
+            N=self.batch_size,
+            # if fix prompt, output only one prompt template per batch to enable resamples
+            nb_templates=random.randint(1,15) if self.fix_prompt else None,
+            single_template=self.fix_prompt,
+            seed=self.seed + (293088429 if test else 0)
+        )
+        self.seed += 1
+        batch = ioi_dataset.toks
 
         # prepend bos token
         batch = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(batch.shape[0],1),batch], dim=1).to(self.device)
@@ -157,20 +168,11 @@ class IOIConfig():
         else:
             return batch, last_token_pos
 
-class GTConfig():
-    def __init__(self, batch_size, device, test_size=10000):
-        self.batch_size = batch_size
-        self.device = device
+class GTConfig(TaskDataset):
+    def __init__(self, batch_size, device):
+        super().__init__(batch_size, device)
 
-        self.test_size = test_size
         self.years_to_sample_from = None
-
-    def get_test_set(self, tokenizer):
-        if self.years_to_sample_from is None:
-            self.years_to_sample_from = get_valid_years(tokenizer, 1000, 1900)
-        test_set = YearDataset(self.years_to_sample_from, self.test_size, Path("utils/datasets/greater_than/potential_nouns.txt"), tokenizer, balanced=False, device=self.device, eos=False).good_toks
-        self.ds_test = DataLoader(test_set, batch_size=self.batch_size)
-        return self.ds_test
 
     def init_modes(self, cf=False):
         if cf:
@@ -179,10 +181,10 @@ class GTConfig():
             cf_tag = ""
 
         with open(f"results/oca/gt/means_{cf_tag}attention.pkl", "rb") as f:
-            # n_layers x n_heads x d_model
+            #  n_layers x 10 (seq_len) x n_heads x d_head
             init_modes_attention = pickle.load(f)
         with open(f"results/oca/gt/means_{cf_tag}mlp.pkl", "rb") as f:
-            # n_layers x n_heads x d_model
+            #  n_layers x 10 (seq_len) x d_model
             init_modes_mlp = pickle.load(f)
         return init_modes_attention[:,-1], init_modes_mlp[:,-1]
         # with open("modes/gt/means_attention.pkl", "rb") as f:
@@ -193,18 +195,19 @@ class GTConfig():
         #     init_modes_mlp = pickle.load(f)
         # return init_modes_attention, init_modes_mlp
 
-    def next_batch(self, tokenizer, test_batch=None, counterfactual=False):
-        if test_batch is not None:
-            batch = test_batch
-        else:
-            if self.years_to_sample_from is None:
-                self.years_to_sample_from = get_valid_years(tokenizer, 1000, 1900)
-            batch = YearDataset(self.years_to_sample_from, self.batch_size, Path("utils/datasets/greater_than/potential_nouns.txt"), tokenizer, balanced=False, device=self.device, eos=False)
+    def next_batch(self, tokenizer, test=False, counterfactual=False):
+        if self.years_to_sample_from is None:
+            self.years_to_sample_from = get_valid_years(tokenizer, 1000, 1900)
+        batch = YearDataset(
+            self.years_to_sample_from, 
+            self.batch_size, 
+            Path("utils/datasets/greater_than/potential_nouns.txt"), 
+            tokenizer, balanced=False, device=self.device, eos=False)
 
-            # examples with start year replaced with "01"
-            if counterfactual:
-                cf = batch.bad_toks
-            batch = batch.good_toks
+        # examples with start year replaced with "01"
+        if counterfactual:
+            cf = batch.bad_toks
+        batch = batch.good_toks
 
         # prepend bos token. Batch does not contain labels
         batch = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(batch.shape[0],1).to(self.device),batch], dim=1)
