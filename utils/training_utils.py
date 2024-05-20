@@ -116,9 +116,21 @@ def load_model_data(model_name, batch_size=8, ctx_length=25, repeats=True, ds_na
 # %%
 
 resid_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_resid_pre"
+attn_out_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_attn_out"
+
+def gen_resample_perm(n):
+    permutation = torch.randperm(n)
+    # make sure all prompts are resampled
+    while (permutation == torch.arange(n)).sum() > 0:
+        permutation = torch.randperm(n)
+    
+    return permutation
 
 def save_hook_last_token(save_to, act, hook):
     save_to.append(act[:,-1,:])
+
+def save_hook_last_token_bsz(bsz, save_to, act, hook):
+    save_to.append(act[:bsz,-1,:])
 
 def save_hook_all_tokens(save_to, act, hook):
     save_to.append(act)

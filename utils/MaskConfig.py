@@ -174,7 +174,7 @@ class InferenceConfig:
             lp.append('mode_step_size')
         return LinePlot(lp)
     
-    def record_post_training(self, folders, component_pruner, next_batch, ablation_type="oa", in_format="edges", out_format="edges", load_edges=False):
+    def record_post_training(self, folders, component_pruner, next_batch, ablation_type="oa", in_format="edges", out_format="edges", load_edges=False, re_eval=True):
         for i, folder in enumerate(folders):
             if isinstance(load_edges, list):
                 read_file = load_edges[i]
@@ -187,9 +187,12 @@ class InferenceConfig:
                 log["clipped_edges"] = []
                 log["vertices"] = []
             
+            if not re_eval and os.path.exists(f"{folder}/post_training.pkl"):
+                with open(f"{folder}/post_training.pkl", "rb") as f:
+                    log = pickle.load(f)
+            
             for lamb_path in glob.glob(f"{folder}/*"):
                 lamb = lamb_path.split("/")[-1]
-                print(lamb)
                 # if lamb =="manual":
                     # if in_format == "edges":
                     #     prune_mask = get_ioi_edge_mask()
@@ -197,19 +200,27 @@ class InferenceConfig:
                     # else:
                     #     ioi_nodes = get_ioi_nodes()
                     #     prune_mask = nodes_to_vertex_mask(ioi_nodes)
-                if read_file and (lamb == "manual" or lamb[1] == "." or lamb[1:3] == "e-"):
-                    edge_list = torch.load(f"{folder}/edges_{lamb}.pth")
-                    prune_mask = edges_to_mask(edge_list)
-                else:
+                if read_file and ablation_type != "oa" and lamb.startswith("edges_"):
+                    lamb = lamb.rsplit(".", 1)[0].replace("edges_", "")
+                elif lamb != "manual":
                     try:
                         float(lamb[-1])
                         float(lamb[0])
                     except:
                         continue
+
+                print(lamb)
+                if (not re_eval) and lamb in log["lamb"]:
+                    continue
+
+                if read_file:
+                    edge_list = torch.load(f"{folder}/edges_{lamb}.pth")
+                    prune_mask = edges_to_mask(edge_list)
+                else:
                     prune_mask = retrieve_mask(lamb_path)
 
-                    if prune_mask is None:
-                        continue
+                if prune_mask is None:
+                    continue
                 
                 specs = []
                 if ablation_type == "oa":

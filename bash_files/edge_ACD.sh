@@ -57,7 +57,7 @@ $CONSTRAINT
 module load Anaconda2
 conda activate take2
 
-$COMMAND1
+$COMMAND2
 
 EOT
 
@@ -66,6 +66,5 @@ EOT
 # else
 #     echo "failure so did not run post training"
 # fi
-
 
 done

@@ -18,6 +18,12 @@ from utils.circuit_utils import discretize_mask, prune_dangling_edges, retrieve_
 from utils.training_utils import load_model_data, LinePlot
 
 # %%
+
+dataset = argv[1]
+ablation_type = argv[2]
+re_eval = True if len(argv) > 3 else False
+# %%
+
 # load model
 model_name = "gpt2-small"
 owt_batch_size = 10
@@ -29,20 +35,24 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
 # %%
-dataset = "ioi"
-ablation_type="cf"
-folders=[
-    f"results/pruning/{dataset}/{ablation_type}/acdc",
-    # f"results/pruning/{dataset}/{ablation_type}/eap",
-    f"results/pruning/{dataset}/{ablation_type}/hc",
-    f"results/pruning/{dataset}/{ablation_type}/unif",
-]
-load_edges = [
-    True,
-    # True,
-    False,
-    False
-]
+
+load_edges_dict = {
+    "acdc": True,
+    "eap": True,
+    "hc": False, 
+    "unif": False
+}
+
+folders = []
+load_edges = []
+
+for technique in load_edges_dict:
+    path = f"results/pruning/{dataset}/{ablation_type}/{technique}"
+    if os.path.exists(path):
+        folders.append(path)
+        load_edges.append(load_edges_dict[technique])
+
+# %%
 cf_mode = ablation_type in {"resample", "cf"}
 
 batch_size=50
@@ -62,5 +72,5 @@ edge_pruner.add_patching_hooks()
 
 # %%
 next_batch = partial(task_ds.retrieve_batch_cf, tokenizer, ablation_type, test=True)
-pruning_cfg.record_post_training(folders, edge_pruner, next_batch, ablation_type, load_edges=load_edges)
+pruning_cfg.record_post_training(folders, edge_pruner, next_batch, ablation_type, load_edges=load_edges, re_eval=re_eval)
 # %%

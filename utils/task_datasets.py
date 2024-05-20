@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import pickle
 import json
 from pathlib import Path
-from utils.training_utils import load_model_data, LinePlot
+from utils.training_utils import load_model_data, LinePlot, gen_resample_perm
 from utils.datasets.ioi.ioi_dataset import IOIDataset
 from utils.datasets.greater_than.utils import get_valid_years
 from utils.datasets.greater_than.data import YearDataset
@@ -40,12 +40,7 @@ class TaskDataset():
             batch, last_token_pos = self.next_batch(tokenizer, test=test)
 
         if ablation_type == "resample":
-            permutation = torch.randperm(batch.shape[0])
-
-            # make sure all prompts are resampled
-            while (permutation == torch.arange(batch.shape[0])).sum() > 0:
-                permutation = torch.randperm(batch.shape[0])
-            permutation = permutation.to(self.device)
+            permutation = gen_resample_perm(batch.shape[0]).to(self.device)
 
             cf = batch[permutation]
             # if resampled sequence i shorter than original sequence, move padding to left

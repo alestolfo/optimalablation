@@ -325,8 +325,8 @@ def mask_to_nodes(mask, mask_type="edges", return_tensor=False):
         return {"attn": attn_nodes, "mlp": mlp_nodes}, node_count
     return {"attn": attn_nodes.cpu().numpy().tolist(), "mlp": mlp_nodes.flatten().cpu().numpy().tolist()}, node_count
 
-# NOTE: when edges are passed in it's expected that MLPs are record 0 to n_layers + 1 (0-13)
-# this function is disgusting
+# NOTE: when edges are passed in it's expected that MLPs are record 0 to 13. 0 input, 1-12 mlps, 13 output.
+# this function is really bad
 def edges_to_mask(edges):
     prune_mask = {}
     for k in edge_prune_mask:

@@ -3,46 +3,83 @@ import pickle
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator, AutoMinorLocator
+from matplotlib.ticker import FormatStrFormatter
 import glob
 import os
+import pandas as pd
 
 sns.set(rc={"xtick.bottom" : True, "ytick.left" : True})
 # plt.rcParams.update({"xtick.bottom" : True, "ytick.left" : True})
 
+# %%
+
+with open("results/pruning/gt/oa/hc/post_training.pkl", "rb") as f:
+    x = pickle.load(f)
+
+for i, l in enumerate(x["lamb"]):
+    if l == "0.0002":
+        for k in x:
+            x[k].pop(i)
+
+with open("results/pruning/gt/oa/hc/post_training.pkl", "wb") as f:
+    pickle.dump(x, f)
+
 
 # %%
+task_lookup = {"ioi": "IOI", "gt": "Greater-Than"}
+ablation_lookup = {"mean": "mean", "cf": "counterfactual", "resample": "resample", "oa": "optimal"}
+
 def plot_points(k, x, color=None):
     print(x)
     if os.path.exists(f"{x}/post_training.pkl"):
         with open(f"{x}/post_training.pkl", "rb") as f:
             log = pickle.load(f)
         # print(log)
-        print(log['tau'])
+
+        for i, lamb in enumerate(log['lamb']):
+            if lamb == "manual":
+                manual_run = {}
+                for ke in log:
+                    manual_run[ke] = log[ke].pop(i)
+                plt.plot(manual_run["clipped_edges"], manual_run["losses"], '*', markersize=20, color="orange", label="manual")
+
+        loss_line = pd.DataFrame({
+            "clipped_edges": log["clipped_edges"],
+            "losses": log["losses"]
+        }).sort_values("clipped_edges")
+        loss_line["losses"] = loss_line["losses"].cummin()
+            
         if color is not None:
-            ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k} post training", marker="X", s=50, color=color)
+            ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k}", marker="X", s=100, color=color)
+            ax = sns.lineplot(x=loss_line["clipped_edges"], y=loss_line["losses"], color=color, linewidth=0.5)
         else:
-            ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k} post training", marker="X", s=50)
+            ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k}", marker="X", s=50)
         
         for i,t in enumerate(log['tau']):
             if 'vertices' in log:
                 print(t, log["lamb"][i], log['clipped_edges'][i], log['vertices'][i], log['losses'][i])
             else:
                 print(t, log["lamb"][i], log['clipped_edges'][i], log['losses'][i])
-            if log["lamb"][i] == "manual":
-                plt.plot(log["clipped_edges"][i], log["losses"][i], 'k*', markersize=10)
     else:
         print("NO POST TRAINING FOUND")
         return
     return ax
 
-def plot_pareto(pms):
+def plot_pareto(pms, log=False):
     folder, manual_folder, y_bound, x_bound, task_name = pms
 
-    fig = plt.figure(figsize=(10,15))
+    fig = plt.figure(figsize=(10,10))
+    for k, (x, color) in manual_folder.items():
+        print(k)
+        plot_points(k, x, color)
+        if os.path.exists(f"{x}/pre_training.pkl"):
+            with open(f"{x}/pre_training.pkl", "rb") as f:
+                log = pickle.load(f)
+            print(log)
+            sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label="pre training", marker="X", s=50)
 
-    for k, x in folder.items():
+    for k, (x, color) in folder.items():
         ax = None
-        color = None
         print(x)
         for path in glob.glob(f"{x}/report/*"):
             # out_path=f"pruning_edges_auto/report/ioi_zero_init_{str(reg_lamb).replace('.', '-')}.pkl"
@@ -68,33 +105,89 @@ def plot_pareto(pms):
                 if tau >= 1:
                     plt.plot(log["clipped_edges"][i], log["losses"][i], 'ks')
                     break
-        plot_points(k, x)
-    
-    for k, x in manual_folder.items():
-        if k == "ACDC":
-            ax = plot_points(k,x, color="black")
-        else:
-            ax = plot_points(k,x)
-        if os.path.exists(f"{x}/pre_training.pkl"):
-            with open(f"{x}/pre_training.pkl", "rb") as f:
-                log = pickle.load(f)
-            print(log)
-            sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label="pre training", marker="X", s=50)
-    
-    plt.ylim(0,y_bound)
+        plot_points(k, x, color)
+        
     plt.xlim(0,x_bound)
     # plt.gca().xaxis.set_major_locator(MultipleLocator(200)) # x gridlines every 0.5 units
     # plt.gca().xaxis.set_minor_locator(AutoMinorLocator(2)) # x gridlines every 0.5 units
     plt.minorticks_on()
     plt.tick_params(which='minor', bottom=False, left=False)
-    plt.grid(visible=True, which='minor', color='k', linewidth=0.5)
+    # formatter = LogFormatter(labelOnlyBase=False, minor_thresholds=(2, 0.4))
+
+    plt.grid(visible=True, which='major', color='grey', linewidth=1)
+    plt.grid(visible=True, which='minor', color='grey', linewidth=0.5)
     # plt.gca().yaxis.set_major_locator(MultipleLocator(0.01)) # y gridlines every 0.5 units
-    plt.xlabel("Edges kept")
-    plt.ylabel("KL divergence")
+    plt.xlabel("Edges in circuit")
+    plt.ylabel("KL loss")
+
+    if log:
+        plt.yscale("log")
+        plt.gca().yaxis.set_major_formatter(FormatStrFormatter("%.2f"))
+        plt.gca().yaxis.set_minor_formatter(FormatStrFormatter("%.3f"))
+    else:
+        plt.ylim(0,y_bound)
+
     plt.savefig(f"results/pareto/{task_name}_pt.png")
+    t, a = task_name.split("/", 1)
+    plt.title(f"{task_lookup[t]} circuits with {ablation_lookup[a]} ablation")
     plt.show()
 
 # %%
+l = [
+    ("ioi", "cf", 0.2, 1200),
+    ("ioi", "oa", 0.14, 1200),
+    ("ioi", "mean", 1, 1200),
+    ("ioi", "resample", 5, 1200),
+    ("gt", "cf", 0.2, 800),
+    ("gt", "oa", 0.04, 800), # need to deal with this
+    ("gt", "mean", 0.4, 800),
+    ("gt", "resample", 0.2, 800)
+]
+for dataset, ablation_type, x_bound, y_bound in l:
+    root_folder = f"results/pruning/{dataset}/{ablation_type}"
+    ax = None
+    # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
+    folders=({
+            # "vertex": "results/pruning_vertices_auto/ioi", 
+            "HCGS": (f"{root_folder}/hc", "blue"), 
+            "UGS": (f"{root_folder}/unif", "red"), 
+            # "edges uniform window": "results/pruning/ioi/cf/unif_window", 
+        }, {
+            "ACDC": (f"{root_folder}/acdc", "black"),
+            "EAP": (f"{root_folder}/eap", "green")
+        }, x_bound, y_bound, f"{dataset}/{ablation_type}")
+    for log in [False, True]:
+        plot_pareto(folders, log=log)
+
+# %%
+folders=[
+    ({
+        # "vertex": "results/pruning_vertices_auto/ioi", 
+        "edges HC": "results/pruning_edges_auto/hc", 
+        # "edges HC (vertex prior)": "results/pruning/ioi/oa/vertex_prior", 
+        "edges uniform": "results/pruning/ioi/oa/unif", 
+        # "edges uniform window": "results/pruning/ioi/oa/unif_window", 
+    }, {
+        "ACDC": "results/pruning/ioi/oa/acdc",
+        # "eap": "results/pruning/ioi/oa/eap"
+    }, 0.15, 1500, "ioi"),
+    ({
+        # "vertex": "results/pruning_vertices_auto/gt", 
+        # "edges HC": "results/pruning/gt/oa/edges", 
+        # "edges HC (vertex prior)": "results/pruning/gt/oa/vertex_prior", 
+        "edges uniform": "results/pruning/gt/oa/unif", 
+    }, {
+        "ACDC": "results/pruning/gt/oa/acdc",
+        "eap": "results/pruning/gt/oa/eap"
+    }, 0.05,1000,"gt"),
+]
+
+
+for folder in folders:
+    plot_pareto(folder)
+
+# %%
+
 
 def compare_train_curves(folder_1, folder_2, edge_assn=False):
     edge_lookup_1 = {}
@@ -187,33 +280,3 @@ compare_train_curves("results/pruning-5-6/gt_edges_unif", "results/pruning/gt/oa
 # %%
 # 
 compare_train_curves("results/pruning/ioi/oa/acdc", "results/pruning/ioi/oa/unif", edge_assn=True)
-
- # %%
-ax = None
-# reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
-folders=[
-    ({
-        # "vertex": "results/pruning_vertices_auto/ioi", 
-        "edges HC": "results/pruning_edges_auto/hc", 
-        # "edges HC (vertex prior)": "results/pruning/ioi/oa/vertex_prior", 
-        "edges uniform": "results/pruning/ioi/oa/unif", 
-        # "edges uniform window": "results/pruning/ioi/oa/unif_window", 
-    }, {
-        "ACDC": "results/pruning/ioi/oa/acdc",
-        # "eap": "results/pruning/ioi/oa/eap"
-    }, 0.15, 1500, "ioi"),
-    ({
-        # "vertex": "results/pruning_vertices_auto/gt", 
-        # "edges HC": "results/pruning/gt/oa/edges", 
-        # "edges HC (vertex prior)": "results/pruning/gt/oa/vertex_prior", 
-        "edges uniform": "results/pruning/gt/oa/unif", 
-    }, {
-        "ACDC": "results/pruning/gt/oa/acdc",
-        "eap": "results/pruning/gt/oa/eap"
-    }, 0.05,1000,"gt"),
-]
-
-for folder in folders:
-    plot_pareto(folder)
-
-# %%

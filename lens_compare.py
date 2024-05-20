@@ -23,15 +23,21 @@ sns.set()
 
 # model_name = argv[1]
 # dir_mode = argv[2]
-model_name = "gpt2-medium"
+model_name = "gpt2-small"
 dir_mode = "vanilla"
 
 folders = {
     "modal": f"results/lens/{model_name}/oa",
     "linear_oa": f"results/lens/{model_name}/linear_oa",
     "tuned": f"results/lens/{model_name}/tuned",
-    "grad": f"results/lens/{model_name}/grad"
+    "grad": f"results/lens/{model_name}/grad",
+    "mean": f"results/lens/{model_name}/mean",
+    "resample": f"results/lens/{model_name}/resample"
 }
+
+for k in folders:
+    if not os.path.exists(folders[k]):
+        os.makedirs(folders[k])
 
 print(model_name)
 print(dir_mode)
@@ -59,6 +65,7 @@ EXAMPLES_SINGULAR = 200
 # resample
 EXAMPLES_RESAMPLE = 1000
 
+# %%
 # model_name = "gpt2-small"
 batch_size = CAUSAL_BATCH_SIZE
 # 100K OWT samples with default sequence length: 235134
@@ -94,12 +101,19 @@ else:
 
 # %%
 if dir_mode == "vanilla":
+    if "mean" not in lens_list:
+        lens_list.append("mean")
+    
+    if "resample" not in lens_list:
+        lens_list.append("resample")
+    
     # get vanilla losses
-    if not os.path.exists(f"{folders['linear_oa']}/original.png"):
-        exp.get_vanilla_losses(lens_list, pics_folder=folders['linear_oa'])
+    if not os.path.exists(f"{folders['linear_oa']}/original.p"):
+        vanilla_losses = exp.get_vanilla_losses(lens_list, pics_folder=folders['linear_oa'])
+        torch.save(vanilla_losses, f"{folders['linear_oa']}/original.pth")
 
     # get causal perturb losses
-    if not os.path.exists(f"{folders['linear_oa']}/causal_losses.pth"):
+    if not os.path.exists(f"{folders['linear_oa']}/causal_losses.p"):
         exp.get_causal_perturb_losses(lens_list, save=f"{folders['linear_oa']}/causal_losses.pth", pics_folder=folders['linear_oa'])
 
     exit()
@@ -245,135 +259,3 @@ else:
 
     else:
         raise Exception("compare mode not found")
-exit()
-
-# %%
-
-def summarize_loss_obj(proj_losses_file, title, separate_vecs=False):
-    # lens_list = ['modal', 'tuned', 'grad', 'linear_oa']
-
-    if separate_vecs:
-        proj_losses = {}
-        for typ in lens_list:
-            if typ == 'modal':
-                continue
-
-            proj_losses[typ] = torch.load(f"{folders[typ]}/{proj_losses_file}.pth")
-            for k in proj_losses[typ]:
-                # modal loss is included in linear_oa
-                proj_losses[typ][k]['loss'] = torch.stack(proj_losses[typ][k]['loss'], dim=0)
-                if k != "perturb":
-                    proj_losses[typ][k]['sim'] = torch.stack(proj_losses[typ][k]['sim'], dim=0)
-    else:
-        proj_losses = torch.load(f"{folders['linear_oa']}/{proj_losses_file}.pth")
-        for k in proj_losses:
-            proj_losses[k]['loss'] = torch.stack(proj_losses[k]['loss'], dim=0)
-        for k in lens_list:
-            proj_losses[k]['sim'] = torch.stack(proj_losses[k]['sim'], dim=0)
-
-    num_lens = len(lens_list)
-    plot_list = ["points", "dirs", "a_sim"]
-    figs = {}
-    axes = {}
-    corrs = {}
-    sim_vecs = {}
-    offset = 1
-
-    for p in plot_list:
-        figs[p], axes[p] = plt.subplots(n_layers-offset, num_lens, figsize=(num_lens * 5, (n_layers-offset) * 5))
-        corrs[p] = {}
-
-    for i,k in enumerate(lens_list):
-        corrs['points'][k] = []
-        corrs['dirs'][k] = []
-        sim_vecs[k] = []
-
-        print(k)
-
-        if separate_vecs:
-            # info for modal lens is stored inside linear_oa
-            dict_key = 'linear_oa' if k == 'modal' else k
-            perturb_loss = proj_losses[dict_key]['perturb']['loss']
-            lens_result = proj_losses[dict_key][k]
-        else:
-            perturb_loss = proj_losses['perturb']['loss']
-            lens_result = proj_losses[k]
-
-        for j in range(offset,n_layers):
-            model_loss = perturb_loss[...,j]
-
-            corr = plot_no_outliers(sns.histplot, 0, 
-                            model_loss.log().flatten().cpu(),
-                            lens_result['loss'][...,j].log().flatten().cpu(), 
-                            axes['points'][j-offset,i], xy_line=True,
-                            args={"x": "model loss", "y": f"{k} lens loss", "corr": True})
-            corrs['points'][k].append(corr)
-
-            corr = plot_no_outliers(sns.histplot, 0, 
-                            model_loss.mean(dim=1).log().flatten().cpu(),
-                            lens_result['loss'][...,j].mean(dim=1).log().flatten().cpu(), 
-                            axes['dirs'][j-offset,i], xy_line=True,
-                            args={"x": "model loss", "y": f"{k} lens loss", "corr": True})
-            corrs['dirs'][k].append(corr)
-
-            # large_ls_idx = ((model_loss.flatten() > model_loss.quantile(.5)) * (lens_result['loss'][...,j].flatten() > lens_result['loss'][...,j].quantile(.5))).nonzero()[:,0]
-            # sim_vec = lens_result['sim'][...,j].flatten()[large_ls_idx]
-            # sim_vecs[k].append(sim_vec.mean().item())
-
-            plot_no_outliers(sns.histplot, 0, 
-                            model_loss.log().flatten().cpu(),
-                            # model_loss.log().flatten()[large_ls_idx].cpu(),
-                            lens_result['sim'][...,j].flatten().cpu(), 
-                            # sim_vec.cpu(), 
-                            axes['a_sim'][j-offset,i],
-                            args={"x": "model loss", "y": f"{k} similarity", "corr": True})
-
-    for p in plot_list:
-        figs[p].savefig(f"{folders['linear_oa']}/{title}_importance_{p}.png")
-        figs[p].show()
-    
-    f, axes = plt.subplots(1,3, figsize=(15,5))
-
-    for i,k in enumerate(lens_list):
-        if separate_vecs:
-            dict_key = 'linear_oa' if k == 'modal' else k
-            lens_result = proj_losses[dict_key][k]
-        else:
-            lens_result = proj_losses[k]
-
-        x = np.arange(n_layers-offset) + offset
-
-        sns.lineplot(x=x, y=corrs['points'][k], ax=axes[0], label=k)
-        sns.lineplot(x=x, y=corrs['dirs'][k], ax=axes[1], label=k)
-        # ax=sns.histplot(proj_losses[k]['sim'].mean(dim=1).flatten().cpu(), ax=axes[i])
-        # ax.set(**{"xlabel": f"similarity {k}", "ylabel": f"density"})
-
-        # sns.lineplot(lens_result['sim'].mean(dim=[0,1]).flatten().cpu(), ax=axes[-1], label=k)
-        sns.lineplot(x=x, y=sim_vecs[k], ax=axes[-1], label=k)
-    f.savefig(f"{folders['linear_oa']}/{title}_sim_comp.png")
-    f.show()
-
-# %%
-summarize_loss_obj("proj_losses_random", "proj_rand")
-
-# %%
-summarize_loss_obj("steer_losses_random", "steer_rand")
-
-# %%
-summarize_loss_obj("proj_losses_singular", "proj_sing", True)
-
-# %%
-summarize_loss_obj("steer_losses_singular", "steer_sing", True)
-
-# %%
-
-
-
-# %%
-# Experiment 2. stimulus-response
-
-# Degradation of performance
-
-# CBE with resample ablation
-
-# %%

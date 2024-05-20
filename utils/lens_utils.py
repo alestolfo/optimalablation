@@ -2,7 +2,7 @@
 import torch
 from fancy_einsum import einsum
 import os
-from utils.training_utils import save_hook_last_token, resid_points_filter, plot_no_outliers
+from utils.training_utils import save_hook_last_token, save_hook_last_token_bsz, resid_points_filter, plot_no_outliers, gen_resample_perm, attn_out_filter
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
@@ -38,7 +38,7 @@ def compile_loss_dfs(all_losses, lens_losses_dfs, suffix=""):
     return lens_losses_dfs
 
 # plotting tuned vs OCA lens performance
-def corr_plot(lens_loss_1, lens_loss_2, key_1, key_2, n_layers, offset=1):
+def corr_plot(lens_loss_1, lens_loss_2, key_1, key_2, n_layers, offset=0):
     tuned_modal_comp = lens_loss_1.merge(lens_loss_2, left_index=True, right_index=True)
 
     f, axes = plt.subplots((n_layers-offset-1)//3 + 1, 3, figsize=(15,15))
@@ -64,7 +64,7 @@ def corr_plot(lens_loss_1, lens_loss_2, key_1, key_2, n_layers, offset=1):
     plt.close(f)
     plt.close(f2)
 
-def overall_comp(lens_losses_dfs, title="Lens losses", save=None, offset=1):
+def overall_comp(lens_losses_dfs, title="Lens losses", save=None, offset=0):
     # overall comparison line plot
     lens_loss_means = {}
     for k in lens_losses_dfs:
@@ -73,7 +73,6 @@ def overall_comp(lens_losses_dfs, title="Lens losses", save=None, offset=1):
         label = None if k.startswith("shrinkage") else k
         ax = sns.lineplot(x=np.arange(len(lens_loss_means[k]) - offset) + offset, y=lens_loss_means[k][offset:], label=label, linewidth=w)
         ax.set(xlabel="layer", ylabel="KL-divergence", title=title)
-
     if save:
         plt.savefig(save)
     plt.show()
@@ -99,7 +98,7 @@ class LensExperiment():
             self.std_mult = (math.log(1.05) * (n_layers - 1 - torch.arange(n_layers).to(device))).exp()
             self.perturb_mag = torch.tensor((self.std_intvs[:,None] * self.std_mult.cpu().numpy()).T, device=device)
             self.perturb_losses = self.get_perturb_magnitudes(folders['linear_oa'])
-
+        
         # for layer_no in range(n_layers):
         #     sns.lineplot(x=self.perturb_mag[layer_no].cpu(), y=self.perturb_losses[layer_no].cpu(), label=layer_no)
 
@@ -114,8 +113,51 @@ class LensExperiment():
             if os.path.exists(f"{folders[k]}/lens_bias.pkl"):
                 with open(f"{folders[k]}/lens_bias.pkl", "rb") as f:
                     all_lens_bias[k] = pickle.load(f)
+            if k == "mean":
+                path = f"{folders[k]}/attn_means.pth"
+                if os.path.exists(path):
+                    means = torch.load(path)
+                else:
+                    means = self.collect_attn_means(folders[k])
+                all_lens_bias["mean"] = means
         
         return all_lens_weights, all_lens_bias
+    
+    def collect_attn_means(self, folder):
+        n_layers = self.model.cfg.n_layers
+        path = f"{folder}/attn_means.pth"
+
+        if os.path.exists(path):
+            means = torch.load(path)
+        else:
+            all_activations = []
+            for i in tqdm(range(10000)):
+                batch = next(self.owt_iter)['tokens']
+
+                with torch.no_grad():
+                    activation_storage = []
+
+                    target_probs = self.model.run_with_hooks(
+                        batch,
+                        fwd_hooks=[
+                                *[(partial(attn_out_filter, layer_no), 
+                                partial(save_hook_last_token, activation_storage)) 
+                                for layer_no in range(n_layers)],
+                            ]
+                    )[:,-1].softmax(dim=-1).unsqueeze(1)
+
+                    # batch, d_model, n_layers
+                    all_activations.append(torch.stack(activation_storage, dim=-1).mean(dim=0, keepdim=True))
+            
+            all_activations = torch.cat(all_activations, dim=0)
+
+            act_means = []
+            # all_activations: [samples, d_model, n_layers]
+            for j in range(n_layers):
+                act_means.append(all_activations[...,j].mean(dim=0))
+
+            torch.save(act_means, path)
+        return means
     
     def compute_act_dist(self, folder):
         n_layers = self.model.cfg.n_layers
@@ -193,13 +235,12 @@ class LensExperiment():
         linear_lens_probs = self.model.unembed(linear_lens_output).log_softmax(dim=-1)
         return linear_lens_probs
 
-    # oa lens: 
-    def apply_oa_lens(self, batch):
-        return
-
     # returns LOGGED probs
-    def apply_modal_lens(self, activation_storage, shared_bias=False):
-        attn_bias = self.all_lens_bias['modal']
+    def apply_modal_lens(self, lens_name, activation_storage, shared_bias=False, attention_storage=None):
+        if lens_name == "resample":
+            permutation = gen_resample_perm(activation_storage[0].shape[0]).to(self.device)
+        else:
+            attn_bias = self.all_lens_bias[lens_name]
 
         resid = []
         for layer_no in range(self.model.cfg.n_layers):
@@ -209,11 +250,17 @@ class LensExperiment():
             else:
                 resid = activation_storage[layer_no].unsqueeze(0)
             # no shared_bias: [layer_no+1, d_model]
-            attn_bias_layer = attn_bias[layer_no]
-            if shared_bias:
-                # shared_bias: [d_model,]
-                attn_bias_layer = attn_bias_layer.unsqueeze(0)
-            resid_mid = resid + attn_bias_layer.unsqueeze(1)
+
+            if lens_name == "resample":
+                resid_mid = resid + attention_storage[layer_no][permutation]
+            else:
+                attn_bias_layer = attn_bias[layer_no]
+                if shared_bias:
+                    # shared_bias: [d_model,]
+                    attn_bias_layer = attn_bias_layer.unsqueeze(0)
+
+                resid_mid = resid + attn_bias_layer.unsqueeze(1)
+            
             normalized_resid_mid = self.model.blocks[layer_no].ln2(resid_mid)
             mlp_out = self.model.blocks[layer_no].mlp(normalized_resid_mid)
             resid = resid_mid + mlp_out
@@ -287,18 +334,25 @@ class LensExperiment():
         return act
     
     # std: [n_layers, d_model]
-    def run_causal_perturb(self, batch, std, perturb_type):
+    def run_causal_perturb(self, batch, std, perturb_type, resample_hook=False):
         n_layers = self.model.cfg.n_layers
 
         activation_storage = []
+        attention_storage = []
         bsz = batch.shape[0]
 
         target_probs = self.model.run_with_hooks(
                 batch,
                 fwd_hooks=[
                         *[(partial(resid_points_filter, layer_no), 
-                        partial(self.causal_and_save_hook_last_token, perturb_type, bsz, std[layer_no], self.act_means[layer_no], activation_storage)) 
+                        partial(self.causal_and_save_hook_last_token, 
+                                perturb_type, bsz, std[layer_no], self.act_means[layer_no], activation_storage)) 
                         for layer_no in range(n_layers)],
+
+                        # we also need to save attentions for resample
+                        *([(partial(attn_out_filter, layer_no), 
+                        partial(save_hook_last_token_bsz, bsz, attention_storage))
+                        for layer_no in range(n_layers)] if resample_hook else [])
                     ]
         )[:,-1].log_softmax(dim=-1)
 
@@ -309,7 +363,8 @@ class LensExperiment():
 
         perturb_loss = kl_loss(target_probs, orig_probs.exp()).sum(dim=-1)
 
-        return target_probs, orig_probs, [a[0] for a in activation_storage], [a[1] for a in activation_storage], perturb_loss
+        return (target_probs, orig_probs, [a[0] for a in activation_storage], 
+                [a[1] for a in activation_storage], perturb_loss, attention_storage if resample_hook else None)
 
     # perturb_type: ["fixed", "project", False]
     # supported_lens = ["tuned", "linear_oa", "grad", "modal"]
@@ -322,9 +377,10 @@ class LensExperiment():
         causal_losses = {}
 
         if perturb_type:
-            target_probs, orig_probs, orig_acts, activation_storage, output_losses["perturb"] = self.run_causal_perturb(batch, std, perturb_type)
+            target_probs, orig_probs, orig_acts, activation_storage, output_losses["perturb"], attention_storage = self.run_causal_perturb(batch, std, perturb_type, resample_hook=("resample" in lens_list))
         else:
             activation_storage = []
+            attention_storage = []
 
             target_probs = self.model.run_with_hooks(
                 batch,
@@ -332,18 +388,27 @@ class LensExperiment():
                         *[(partial(resid_points_filter, layer_no), 
                         partial(save_hook_last_token, activation_storage)) 
                         for layer_no in range(n_layers)],
+
+                        # we also need to save attentions for resample
+                        *([(partial(attn_out_filter, layer_no), 
+                        partial(save_hook_last_token, attention_storage))
+                        for layer_no in range(n_layers)] if "resample" in lens_list else [])
                     ]
             )[:,-1].log_softmax(dim=-1).unsqueeze(1)
-
+        
         for k in lens_list:
-            if k == "modal":
-                lens_probs = self.apply_modal_lens(activation_storage, self.shared_bias)
+            if k == "modal" or k == "mean":
+                lens_probs = self.apply_modal_lens(k, activation_storage, self.shared_bias or k == "mean")
+            elif k == "resample":
+                lens_probs = self.apply_modal_lens(k, activation_storage, attention_storage=attention_storage)
             else:
                 lens_probs = self.apply_lens(k, activation_storage)
 
             if perturb_type:
-                if k == "modal":
-                    orig_lens_probs = self.apply_modal_lens(orig_acts, self.shared_bias)
+                if k == "modal" or k == "mean":
+                    orig_lens_probs = self.apply_modal_lens(k, orig_acts, self.shared_bias or k == "mean")
+                elif k == "resample":
+                    orig_lens_probs = self.apply_modal_lens(k, orig_acts, attention_storage=attention_storage)
                 else:
                     orig_lens_probs = self.apply_lens(k, orig_acts)
 
@@ -382,6 +447,11 @@ class LensExperiment():
         # corr_plot(lens_losses_dfs["modal"], lens_losses_dfs["linear_oa"], "modal", "linear_oa")
         corr_plot(lens_losses_dfs["linear_oa"], lens_losses_dfs["tuned"], "linear_oa", "tuned", self.model.cfg.n_layers)
         overall_comp(lens_losses_dfs, title="Lens losses", save=None if pics_folder is None else f"{pics_folder}/original.png")
+
+        means_dfs = {}
+        for k in lens_losses_dfs:
+            means_dfs[k] = lens_losses_dfs[k].mean()
+        return means_dfs
 
     def get_causal_losses(self, std, perturb_type, batches=100, lens_list=["modal", "linear_oa", "tuned", "grad"], causal_loss=False):
         all_comp_losses = {"perturb": [], **{k: [] for k in lens_list}}
@@ -462,7 +532,7 @@ class LensExperiment():
                         batch = next(self.owt_iter)['tokens']
 
                         # pass in MVN transformation
-                        _, _, _, _, perturb_loss = self.run_causal_perturb(batch, std * self.std_mult[..., None, None] * self.a_mtrx, perturb_type="perturb")
+                        _, _, _, _, perturb_loss, _ = self.run_causal_perturb(batch, std * self.std_mult[..., None, None] * self.a_mtrx, perturb_type="perturb")
                         
                         perturb_losses_by_std.append(perturb_loss.mean(dim=0))
                     perturb_losses_by_std = torch.stack(perturb_losses_by_std, dim=0).mean(dim=0)
