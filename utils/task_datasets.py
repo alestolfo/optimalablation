@@ -154,8 +154,8 @@ class IOIConfig(TaskDataset):
         if counterfactual:
             cf = (
                 ioi_dataset
-                # .gen_flipped_prompts(("IO", "RAND"), seed=1)
-                # .gen_flipped_prompts(("S", "RAND"), seed=2)
+                .gen_flipped_prompts(("IO", "RAND"), seed=1)
+                .gen_flipped_prompts(("S", "RAND"), seed=2)
                 .gen_flipped_prompts(("S1", "RAND"), seed=3)
             ).toks
             cf = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(cf.shape[0],1),cf], dim=1).to(self.device)

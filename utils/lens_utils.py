@@ -157,7 +157,7 @@ class LensExperiment():
                 act_means.append(all_activations[...,j].mean(dim=0))
 
             torch.save(act_means, path)
-        return means
+        return act_means
     
     def compute_act_dist(self, folder):
         n_layers = self.model.cfg.n_layers

@@ -331,18 +331,20 @@ def edges_to_mask(edges):
     prune_mask = {}
     for k in edge_prune_mask:
         prune_mask[k] = []
-        if k.endswith("attn"):
-            edges[k][:,:2] = edges[k][:,[1,0]]
-        else:
-            edges[k][:,0] -= 1
+        if edges[k].nelement() > 0:
+            if k.endswith("attn"):
+                edges[k][:,:2] = edges[k][:,[1,0]]
+            else:
+                edges[k][:,0] -= 1
         edges_k = torch.cat([torch.zeros((edges[k].shape[0],1)).to(device), edges[k].to(device)], dim=1)
         for i, ts in enumerate(edge_prune_mask[k]):
             this_layer_mask = ts.clone() * 0
-            edge_idxs = (edges_k[:,1] == i).nonzero()
-            if edge_idxs.nelement() > 0:
-                this_layer_edges = edges_k[edge_idxs[:,0]].int()
-                this_layer_slice = tuple([this_layer_edges[:,0], *[this_layer_edges[:,i] for i in range(2, this_layer_edges.shape[1])]])
-                this_layer_mask[this_layer_slice] = 1
+            if edges_k.nelement() > 0:
+                edge_idxs = (edges_k[:,1] == i).nonzero()
+                if edge_idxs.nelement() > 0:
+                    this_layer_edges = edges_k[edge_idxs[:,0]].int()
+                    this_layer_slice = tuple([this_layer_edges[:,0], *[this_layer_edges[:,i] for i in range(2, this_layer_edges.shape[1])]])
+                    this_layer_mask[this_layer_slice] = 1
             prune_mask[k].append(this_layer_mask)
     return prune_mask
 

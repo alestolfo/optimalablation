@@ -174,7 +174,9 @@ class InferenceConfig:
             lp.append('mode_step_size')
         return LinePlot(lp)
     
-    def record_post_training(self, folders, component_pruner, next_batch, ablation_type="oa", in_format="edges", out_format="edges", load_edges=False, re_eval=True):
+    def record_post_training(self, folders, component_pruner, next_batch, 
+                             ablation_type="oa", in_format="edges", out_format="edges", 
+                             load_edges=False, re_eval=True, transfer=False):
         for i, folder in enumerate(folders):
             if isinstance(load_edges, list):
                 read_file = load_edges[i]
@@ -187,8 +189,13 @@ class InferenceConfig:
                 log["clipped_edges"] = []
                 log["vertices"] = []
             
-            if not re_eval and os.path.exists(f"{folder}/post_training.pkl"):
-                with open(f"{folder}/post_training.pkl", "rb") as f:
+            if transfer:
+                post_training_path = f"{folder}/post_training_{ablation_type}.pkl"
+            else:
+                post_training_path = f"{folder}/post_training.pkl"
+            
+            if not re_eval and os.path.exists(post_training_path):
+                with open(post_training_path, "rb") as f:
                     log = pickle.load(f)
             
             for lamb_path in glob.glob(f"{folder}/*"):
@@ -272,7 +279,7 @@ class InferenceConfig:
                     print("Clipped edges", clipped_edges)
                     print("Avg KL loss", avg_loss)
 
-            with open(f"{folder}/post_training.pkl", "wb") as f:
+            with open(post_training_path, "wb") as f:
                 pickle.dump(log, f)
 
 

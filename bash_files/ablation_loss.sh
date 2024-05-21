@@ -2,7 +2,7 @@
 sbatch <<EOT
 #!/bin/bash
 #SBATCH -c 1
-#SBATCH -p seas_gpu
+#SBATCH -p gpu
 #SBATCH --constraint="a100"
 #SBATCH --job-name=abl_loss_$1
 #SBATCH --gpus 1

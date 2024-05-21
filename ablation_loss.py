@@ -35,7 +35,7 @@ n_heads = model.cfg.n_heads
 
 # %%
 # desc: ablation type. Supported ablation types: zero, mean, oca, resample, refmean, cf
-args = load_args("ablation_loss", defaults={"desc": "resample", "dataset": "ioi"})
+args = load_args("ablation_loss", defaults={"desc": "oca", "dataset": "ioi"})
 folder, ablation_type, dataset = args["folder"], args["desc"], args["dataset"]
 
 oca_train = ablation_type == "oca" and not os.path.exists(f"{folder}/oca_modes.pth")
@@ -65,11 +65,12 @@ elif ablation_type == "refmean":
 
 # training mode if there are no recorded modes
 elif ablation_type == "oca" and not oca_train:
-        init_modes = torch.load(f"{folder}/oca_modes.pth")
-        init_modes = init_modes['modal_attention'], init_modes['modal_mlp']
-else:
+    init_modes = torch.load(f"{folder}/oca_modes.pth")
+    init_modes = init_modes['modal_attention'], init_modes['modal_mlp']
+elif ablation_type == "mean" or ablation_type == "oca":
     init_modes = task_ds.init_modes()
-
+else:
+    raise Exception("ablation type not found")
 
 cf_mode = ablation_type in {"resample", "cf"}
 vertex_pruner = VertexPruner(model, pruning_cfg, init_modes, mask_sampler, counterfactual_mode=cf_mode)
@@ -113,11 +114,7 @@ for no_batches in tqdm(range(max_batches)):
     else:
         with torch.no_grad():
             # loss: [n_components, batch_size]
-            if cf_mode:
-                loss, _ = vertex_pruner(batch, last_token_pos, separate_loss=True, counterfactual=cf)
-            else:
-                loss, _ = vertex_pruner(batch, last_token_pos, separate_loss=True)
-
+            loss, _ = vertex_pruner(batch, last_token_pos, counterfactual=cf, separate_loss=True)
             head_losses, head_vars = update_means_variances(head_losses, head_vars, loss, no_batches)
         
         if no_batches % -100 == -1:

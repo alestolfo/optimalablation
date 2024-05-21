@@ -1,0 +1,11 @@
+,key,nodes,edges,loss
+0,results/pruning_edges_auto/ioi_unif/0.0007,43,257,0.07219450324773788
+1,results/pruning_edges_auto/ioi_unif/0.0002,74,620,0.05466896891593933
+2,results/pruning_edges_auto/ioi_unif/0.0003,59,447,0.05663547217845917
+3,results/pruning_edges_auto/ioi_unif/0.0001,98,928,0.04650451838970184
+4,results/pruning_edges_auto/ioi_unif/7e-05,92,1071,0.047469555772840975
+5,results/pruning_edges_auto/ioi_unif/0.001,39,210,0.07474079821258783
+6,results/pruning_edges_auto/ioi_unif/0.00015,82,722,0.05494931600987911
+7,results/pruning_edges_auto/ioi_unif/0.00018,74,655,0.054880674183368686
+8,results/pruning_edges_auto/ioi_unif/0.0005,52,339,0.06535220500081777
+9,results/pruning_edges_auto/ioi_unif/5e-05,104,1290,0.03951072972267866

@@ -21,10 +21,10 @@ from utils.lens_utils import LensExperiment, compile_loss_dfs, corr_plot, overal
 # %%
 sns.set()
 
-# model_name = argv[1]
-# dir_mode = argv[2]
-model_name = "gpt2-small"
-dir_mode = "vanilla"
+model_name = argv[1]
+dir_mode = argv[2]
+# model_name = "gpt2-medium"
+# dir_mode = "vanilla"
 
 folders = {
     "modal": f"results/lens/{model_name}/oa",
@@ -93,6 +93,7 @@ print(BATCHES_RAND, BATCHES_SINGULAR, BATCHES_RESAMPLE)
 exp = LensExperiment(model, owt_iter, folders, device)
 # lens_list = ["modal", "linear_oa", "tuned", "grad"]
 
+# %%
 # grad lens not included for larger models
 if model_name == "gpt2-small":
     lens_list = ["modal", "linear_oa", "tuned", "grad"]
@@ -113,8 +114,8 @@ if dir_mode == "vanilla":
         torch.save(vanilla_losses, f"{folders['linear_oa']}/original.pth")
 
     # get causal perturb losses
-    if not os.path.exists(f"{folders['linear_oa']}/causal_losses.p"):
-        exp.get_causal_perturb_losses(lens_list, save=f"{folders['linear_oa']}/causal_losses.pth", pics_folder=folders['linear_oa'])
+    # if not os.path.exists(f"{folders['linear_oa']}/causal_losses.p"):
+    #     exp.get_causal_perturb_losses(lens_list, save=f"{folders['linear_oa']}/causal_losses.pth", pics_folder=folders['linear_oa'])
 
     exit()
 

@@ -48,13 +48,26 @@ for ds in dataset_list:
 
 # %%
 
+CORR_SIZE = 24
+SMALL_SIZE = 12
+MEDIUM_SIZE = 20
+BIGGER_SIZE = 24
+
+plt.rc('font', size=CORR_SIZE)          # controls default text sizes
+plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
+plt.rc('axes', labelsize=MEDIUM_SIZE)    # fontsize of the x and y labels
+plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('legend', fontsize=SMALL_SIZE)    # legend fontsize
+plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
+
 n = len(ablation_types)
 
 for ds in dataset_list:
     f, axes = plt.subplots(n, n, figsize=(5*n, 5*n))
     for i in range(n):
         x = ablation_types[i]
-        sns.histplot(ablation_data[ds][x]['head_losses'].log().cpu(), ax=axes[i,i])
+        sns.histplot(ablation_data[ds][x]['head_losses'].log().cpu(), ax=axes[i,i], legend=False)
         axes[i,i].set(xlabel=ax_labels[x])
         for j in range(i+1, n):
             y = ablation_types[j]
@@ -67,10 +80,10 @@ for ds in dataset_list:
                             (ablation_data[ds][x]['head_losses'] > ablation_data[ds][x]['head_losses'].squeeze(-1)).sum(dim=-1), 
                             (ablation_data[ds][y]['head_losses'] > ablation_data[ds][y]['head_losses'].squeeze(-1)).sum(dim=-1),
                             axes[j,i], xy_line=True, args={"x": ax_labels[x], "y": ax_labels[y], "s": 10, "corr": True})
-    plt.savefig(f"{folder}/{ds}.png")
     plt.suptitle(f"Correlation plots of ablation loss measurements on {dataset_list[ds]}", fontsize=24)
     plt.tight_layout()
     plt.subplots_adjust(top=.96)
+    plt.savefig(f"{folder}/{ds}.png")
     plt.show()
 
 
@@ -134,10 +147,6 @@ for ds in dataset_list:
         roc = 0
 
         for node_idx in ablation_data[ds][ablation_type]['head_losses'].argsort(dim=0, descending=True).flatten().tolist():
-            # only give credit for finding attention heads
-            # if node_idx >= n_layers * n_heads:
-            #     continue
-
             # mlp
             if node_idx >= n_layers * n_heads:
                 node_idx += 1
@@ -166,7 +175,6 @@ for ds in dataset_list:
             # print(positives)
             # print(idx_dict[node_idx])
 
-                        
             true_positives.append(true_positives[-1] + positives)
             false_positives.append(false_positives[-1])
 
@@ -184,7 +192,7 @@ for ds in dataset_list:
         #     break
     plt.xlabel("False positives")
     plt.ylabel("True positives")
-    plt.xscale("log")
+    # plt.xscale("log")
     # plt.xlim(0.01, 31526)
     plt.title(f"Edge ROC curves on {dataset_list[ds]}")
     plt.savefig(f"{folder}/{ds}_roc_nodes.png")
@@ -219,16 +227,21 @@ for ds in dataset_list:
         roc = 0
 
         for node_idx in ablation_data[ds][ablation_type]['head_losses'].argsort(dim=0, descending=True).flatten().tolist():
-            # only give credit for finding attention heads
             # if node_idx >= n_layers * n_heads:
-            #     continue
+            #     continue            
 
             if node_idx in idx_dict:
-                prop = idx_dict[node_idx][0] / idx_dict[node_idx][1]
-                # prop = 1
-                true_positives.append(true_positives[-1] + prop)
-                false_positives.append(false_positives[-1] + 1 - prop)
+                true_positives.append(true_positives[-1] + 1)
+                false_positives.append(false_positives[-1])
+
+                # true_positives.append(true_positives[-1] + idx_dict[node_idx][0])
+                # false_positives.append(false_positives[-1])
+                
+                # true_positives.append(true_positives[-1])
+                # false_positives.append(false_positives[-1] + idx_dict[node_idx][1] - idx_dict[node_idx][0])
             else:
+                # true_positives.append(true_positives[-1])
+                # false_positives.append(false_positives[-1] + edges_per_node['attn'] if node_idx < n_layers * n_heads else edges_per_node['mlp'])
                 true_positives.append(true_positives[-1])
                 false_positives.append(false_positives[-1] + 1)
 

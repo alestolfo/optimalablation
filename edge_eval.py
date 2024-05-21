@@ -19,9 +19,16 @@ from utils.training_utils import load_model_data, LinePlot
 
 # %%
 
-dataset = argv[1]
-ablation_type = argv[2]
-re_eval = True if len(argv) > 3 else False
+dataset = "ioi"
+ablation_type = "cf"
+# dataset = argv[1]
+# ablation_type = argv[2]
+
+if len(argv) > 3:
+    transfer_folder = argv[3]
+else:
+    transfer_folder = ablation_type
+re_eval = True 
 # %%
 
 # load model
@@ -47,7 +54,7 @@ folders = []
 load_edges = []
 
 for technique in load_edges_dict:
-    path = f"results/pruning/{dataset}/{ablation_type}/{technique}"
+    path = f"results/pruning/{dataset}/{transfer_folder}/{technique}"
     if os.path.exists(path):
         folders.append(path)
         load_edges.append(load_edges_dict[technique])
@@ -72,5 +79,5 @@ edge_pruner.add_patching_hooks()
 
 # %%
 next_batch = partial(task_ds.retrieve_batch_cf, tokenizer, ablation_type, test=True)
-pruning_cfg.record_post_training(folders, edge_pruner, next_batch, ablation_type, load_edges=load_edges, re_eval=re_eval)
+pruning_cfg.record_post_training(folders, edge_pruner, next_batch, ablation_type, load_edges=load_edges, re_eval=re_eval, transfer=(transfer_folder != ablation_type))
 # %%

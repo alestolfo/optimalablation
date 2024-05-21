@@ -29,10 +29,12 @@ with open("results/pruning/gt/oa/hc/post_training.pkl", "wb") as f:
 task_lookup = {"ioi": "IOI", "gt": "Greater-Than"}
 ablation_lookup = {"mean": "mean", "cf": "counterfactual", "resample": "resample", "oa": "optimal"}
 
-def plot_points(k, x, color=None):
+def plot_points(k, x, color=None, suffix=""):
     print(x)
-    if os.path.exists(f"{x}/post_training.pkl"):
-        with open(f"{x}/post_training.pkl", "rb") as f:
+    log_file = f"{x}/post_training{suffix}.pkl"
+    print(log_file)
+    if os.path.exists(log_file):
+        with open(log_file, "rb") as f:
             log = pickle.load(f)
         # print(log)
 
@@ -65,10 +67,10 @@ def plot_points(k, x, color=None):
         return
     return ax
 
-def plot_pareto(pms, log=False):
+def plot_pareto(pms, log=False, suffix=""):
     folder, manual_folder, y_bound, x_bound, task_name = pms
 
-    fig = plt.figure(figsize=(10,10))
+    fig = plt.figure(figsize=(8,8))
     for k, (x, color) in manual_folder.items():
         print(k)
         plot_points(k, x, color)
@@ -105,7 +107,10 @@ def plot_pareto(pms, log=False):
                 if tau >= 1:
                     plt.plot(log["clipped_edges"][i], log["losses"][i], 'ks')
                     break
-        plot_points(k, x, color)
+        if suffix:
+            plot_points(k, x, color, suffix)
+        else:
+            plot_points(k, x, color)
         
     plt.xlim(0,x_bound)
     # plt.gca().xaxis.set_major_locator(MultipleLocator(200)) # x gridlines every 0.5 units
@@ -127,9 +132,13 @@ def plot_pareto(pms, log=False):
     else:
         plt.ylim(0,y_bound)
 
-    plt.savefig(f"results/pareto/{task_name}_pt.png")
     t, a = task_name.split("/", 1)
-    plt.title(f"{task_lookup[t]} circuits with {ablation_lookup[a]} ablation")
+    if a in ablation_lookup:
+        abl_type = f"with {ablation_lookup[a]} ablation"
+    else:
+        abl_type = f"ablation type comparison"
+    plt.title(f"{task_lookup[t]} circuits {abl_type}")
+    plt.savefig(f"results/pareto/{task_name}_pt_{'log' if log else 'c'}{suffix}.png")
     plt.show()
 
 # %%
@@ -158,6 +167,60 @@ for dataset, ablation_type, x_bound, y_bound in l:
         }, x_bound, y_bound, f"{dataset}/{ablation_type}")
     for log in [False, True]:
         plot_pareto(folders, log=log)
+
+# %%
+
+# ablation comparison results
+l2 = [
+    ("ioi", 1, 1200),
+    ("gt", 0.4, 800)
+]
+# comparison across ablation types
+for dataset, x_bound, y_bound in l2:
+    root_folder = f"results/pruning/{dataset}"
+    ax = None
+    # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
+    folders=({
+            "Mean": (f"{root_folder}/mean/unif", "coral"), 
+            "Resample": (f"{root_folder}/resample/unif", "saddlebrown"), 
+            "Optimal": (f"{root_folder}/oa/unif", "red"), 
+            "CF": (f"{root_folder}/cf/unif", "maroon"), 
+        }, {}, x_bound, y_bound, f"{dataset}/comp/unif_")
+    for log in [False, True]:
+        plot_pareto(folders, log=log)
+
+# %%
+l3 = [
+    ("ioi", "cf", 0.2, 1200),
+    ("ioi", "oa", 0.14, 1200),
+    ("ioi", "mean", 1, 1200),
+    ("ioi", "resample", 5, 1200),
+    ("gt", "cf", 0.2, 800),
+    ("gt", "oa", 0.04, 800), # need to deal with this
+    ("gt", "mean", 0.4, 800),
+    ("gt", "resample", 0.2, 800)
+]
+for dataset, ablation_type, x_bound, y_bound in l:
+    root_folder = f"results/pruning/{dataset}"
+    ax = None
+    # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
+    other_folders = {
+            "Mean": (f"{root_folder}/mean/acdc", "coral"), 
+            "Resample": (f"{root_folder}/resample/acdc", "saddlebrown"), 
+            "Optimal": (f"{root_folder}/oa/acdc", "red"), 
+            "Counterfactual": (f"{root_folder}/cf/acdc", "maroon"), 
+        }
+    my_type = ablation_lookup[ablation_type].capitalize()
+    print(my_type)
+    my_folder = other_folders[my_type]
+    del other_folders[my_type]
+    folders=(other_folders, {
+            my_type: my_folder,
+            # "ACDC": (f"{root_folder}/acdc", "black"),
+            # "EAP": (f"{root_folder}/eap", "green")
+        }, x_bound, y_bound, f"{dataset}/{ablation_type}")
+    for log in [False, True]:
+        plot_pareto(folders, log=log, suffix=f"_{ablation_type}")
 
 # %%
 folders=[

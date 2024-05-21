@@ -26,28 +26,29 @@ from training_utils import LinePlot
 
 # %%
 
+methods = {"acdc": "ACDC", "eap": "EAP", "hc": "HCGS", "unif": "UGS"}
+ablation_types = ["mean", "resample", "oa", "cf"]
+
 task_name = "ioi"
-folders= {"ioi":
-    {
+folders= {
+    "ioi": {f"{ablation_type}-{methods[m]}": f"results/pruning/ioi/{ablation_type}/{m}" for m in methods for ablation_type in ablation_types},
         # "vertex": "results/pruning_vertices_auto/ioi", 
         # "edges HC": "results/pruning_edges_auto/ioi_edges", 
         # "edges HC (vertex prior)": "results/pruning_edges_auto/ioi_vertex_prior", 
         # "edges uniform": "results/pruning_edges_auto/ioi_unif", 
-        "edges dynamic-0.3": "results/pruning_edges_auto/ioi_dynamic_unif", 
-        "edges dynamic-0.5": "results/pruning_edges_auto/ioi_dynamic_unif-0.5", 
-        "edges dynamic-0.99": "results/pruning_edges_auto/ioi_dynamic_unif-0.99", 
+        # "edges dynamic-0.3": "results/pruning_edges_auto/ioi_dynamic_unif", 
+        # "edges dynamic-0.5": "results/pruning_edges_auto/ioi_dynamic_unif-0.5", 
+        # "edges dynamic-0.99": "results/pruning_edges_auto/ioi_dynamic_unif-0.99", 
         # "edges uniform window": "results/pruning_edges_auto/ioi_unif_window", 
-        "ACDC": "results/pruning_edges_auto/ioi_acdc",
+        # "ACDC": "results/pruning_edges_auto/ioi_acdc",
         # "eap": "results/pruning_edges_auto/ioi_eap"
-    },
-    "gt": {
+    "gt": {f"{ablation_type}-{methods[m]}": f"results/pruning/ioi/{ablation_type}/{m}" for m in methods for ablation_type in ablation_types}
         # "vertex": "results/pruning_vertices_auto/gt", 
         # "edges HC": "results/pruning_edges_auto/gt_edges", 
         # "edges HC (vertex prior)": "results/pruning_edges_auto/gt_vertex_prior", 
-        "edges uniform": "results/pruning_edges_auto/gt_unif", 
-        "ACDC": "results/pruning_edges_auto/gt_acdc",
+        # "edges uniform": "results/pruning_edges_auto/gt_unif", 
+        # "ACDC": "results/pruning_edges_auto/gt_acdc",
         # "eap": "results/pruning_edges_auto/gt_eap"
-    }
 }[task_name]
 out_folder = f"results/similarities/{task_name}"
 
@@ -75,7 +76,6 @@ all_masks = {}
 task = folders
 for k in task:
     folder = task[k]
-    print(folder)
     if os.path.exists(f"{folder}/post_training.pkl"):
         with open(f"{folder}/post_training.pkl", "rb") as f:
             post_training = pickle.load(f)
@@ -84,17 +84,17 @@ for k in task:
             training_dfs[k] = post_training_df
     for lamb_path in glob.glob(f"{folder}/*"):
         lamb = lamb_path.split("/")[-1]
-        print(lamb_path)
+        print("NEW LAMB", lamb_path)
         try:
-            float(lamb[-1])
-            print(lamb[0])
-            float(lamb[0])
-            if k == "acdc" or k == "eap":
-                prune_mask = torch.load(f"{folder}/edges_{lamb}.pth")
+            if lamb.startswith("edges_"):
+                prune_mask = torch.load(f"{folder}/{lamb}")
                 prune_mask = edges_to_mask(prune_mask)
             else:
-                if len(glob.glob(f"{lamb_path}/fit_modes_*.pth")) == 0:
-                    continue
+                float(lamb[-1])
+                print(lamb[0])
+                float(lamb[0])
+                # if len(glob.glob(f"{lamb_path}/fit_modes_*.pth")) == 0:
+                #     continue
                 prune_mask = retrieve_mask(lamb_path)
                 prune_mask = discretize_mask(prune_mask, tau)
         except:
@@ -139,11 +139,16 @@ def get_mask_smiliarities(all_masks, output_folder):
         node_similarities.append({"key1": k})
         edges_1, mask_1, attn_1, mlp_1, loss = all_masks[k]
         total_nodes_1 = (attn_1 > 0).sum().item() + (mlp_1 > 0).sum().item()
+        if total_nodes_1 <= 0:
+            continue
 
         total_nodes.append({"key":k, "nodes": total_nodes_1, "edges": edges_1, "loss": loss})
 
         for ell in all_masks:
             edges_2, mask_2, attn_2, mlp_2, _ = all_masks[ell]
+
+            if (attn_2 > 0).sum().item() + (mlp_2 > 0).sum().item() <= 0:
+                continue
 
             similarity = np.sum([(m1 * mask_2[key][i] > 0).sum().item() for key in mask_1 for i, m1 in enumerate(mask_1[key])])
 
