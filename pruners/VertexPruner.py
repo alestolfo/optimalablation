@@ -190,7 +190,7 @@ class VertexPruner(torch.nn.Module):
         return torch.cat([self.modal_attention.flatten(start_dim=1,end_dim=2), self.modal_mlp], dim=0)        
 
     # graph_suffix: current time, pass if we want to plot a histogram of KL loss, mask params
-    def forward(self, batch, last_token_pos, graph_suffix=None, return_output=False, timing=True, separate_loss=False, counterfactual=None):
+    def forward(self, batch, last_token_pos, counterfactual=None, graph_suffix=None, return_output=False, timing=True, separate_loss=False):
         if timing:
             end = []
             for x in range(6):
