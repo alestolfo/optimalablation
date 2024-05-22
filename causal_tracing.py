@@ -19,7 +19,7 @@ import pickle
 from itertools import cycle
 from utils.training_utils import load_model_data, LinePlot
 from torch.utils.data import DataLoader
-from utils.tracing_utils import get_subject_tokens, replace_subject_tokens, patch_component_last_token, patch_component_subject_tokens, patch_component_all_tokens
+from utils.tracing_utils import get_subject_tokens, replace_subject_tokens, patch_component_last_token, patch_component_token_pos, patch_component_all_tokens
 
 # %%
 
@@ -37,7 +37,7 @@ TARGET_BATCH = 20
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"
 model_name = "gpt2-xl"
-batch_size = 10
+batch_size = 3
 clip_value = 1e5
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -50,7 +50,7 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 head_dim = model.cfg.d_head
 d_model = model.cfg.d_model
-lr = 2e-3
+lr = 1e-3
 
 # learning hyperparameters
 kl_loss = torch.nn.KLDivLoss(reduction="none")
@@ -62,39 +62,45 @@ resid_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_re
 with open(f"{ds_path}/{ds_name}.pkl", 'rb') as f:
     correct_prompts = pickle.load(f)
 
+# %%
+train_split = 0.6
+correct_prompts = correct_prompts[:math.ceil(train_split * len(correct_prompts))]
 data_loader = DataLoader(correct_prompts, batch_size=batch_size, shuffle=True)
 data_iter = cycle(iter(data_loader))
 
 # %%
 
-causal_layers = [i for i in range(36,44)]
+causal_layers = [i for i in range(0,48)]
 ct_layers = len(causal_layers)
 
 # init_token = torch.randn((ct_layers + 1, d_model)).to(device)
 
-with open(f"{folder}/null_tokens_{causal_layers[0]}_{causal_layers[-1]}.pkl", "rb") as f:
-    init_token = pickle.load(f)
-# init_token = torch.load(f"{folder}/subject_means.pth")
-# init_token = init_token.unsqueeze(0).repeat(ct_layers+1, 1)
-# %%
-
-null_token = torch.nn.Parameter(init_token)
-optimizer = torch.optim.AdamW([null_token], lr=lr, weight_decay=0)
-
-# %%
+# with open(f"{folder}/null_tokens_{causal_layers[0]}_{causal_layers[-1]}.pkl", "rb") as f:
+#     init_token = pickle.load(f)
+grad_acc = math.ceil(TARGET_BATCH / batch_size)
 attn_out_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_attn_out" 
 mlp_out_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_mlp_out" 
 
-grad_acc = math.ceil(TARGET_BATCH / batch_size)
-counter = 0
 
 # %%
+window_size = 0
+# attn, mlp
+token_pos_list = ["all_subject", "last_subject", "middle", "last"]
+node_type_list = ["attn", "mlp"]
+
+init_token = torch.load(f"{folder}/subject_means.pth")
+init_token = init_token.unsqueeze(0).repeat(ct_layers+1, 1)
+null_token = torch.nn.Parameter(init_token)
+optimizer = torch.optim.AdamW([null_token], lr=lr, weight_decay=0)
+counter = 0
 n_steps = 0
+acc_loss = 0
 optimizer.zero_grad()
 lp = LinePlot(["kl_loss", "step_sz"])
 
-acc_loss = 0
-for no_batches in tqdm(range(10000)):
+# TRAINING RUNS FOR THIS: MLP/ATTN; 0/2/4 WINDOWS; 4 token positions; KL vs train loss.
+
+for no_batches in tqdm(range(500 * grad_acc)):
     batch = next(data_iter)
 
     tokens, subject_pos = get_subject_tokens(batch, tokenizer, mode=mode)
@@ -108,7 +114,8 @@ for no_batches in tqdm(range(10000)):
         fwd_hooks = [
             ("hook_embed", partial(replace_subject_tokens, bsz, subject_pos, null_token)),
             *[
-                (partial(mlp_out_filter, layer_no), 
+                (partial(attn_out_filter if node_type == "attn" 
+                         else mlp_out_filter, layer_no), 
                 partial(patch_component_last_token, bsz, j)) 
                 for j, layer_no in enumerate(causal_layers)
             ]
@@ -118,25 +125,17 @@ for no_batches in tqdm(range(10000)):
     result = result.unflatten(0, (-1, bsz))
 
     target_result = result[0].unsqueeze(1)
-    corrupted_result = result[-1].unsqueeze(1)
-    layer_results = result[1:-1].permute((1,0,2))
+    layer_results = result[1:].permute((1,0,2))
 
+    target_loss, target_tokens = target_result.max(dim=-1)
+    target_tokens = target_tokens.flatten()
+    target_mask = torch.zeros_like(target_result).to(device)
+    target_mask[torch.arange(target_result.shape[0]).to(device),0,target_tokens] = 1
     
-
-    # total_loss = kl_loss(corrupted_result, target_result.exp()).sum(dim=-1)
-    # aie_loss = kl_loss(layer_results, target_result.exp()).sum(dim=-1)
-
-    # print("Total loss", total_loss.item())
-
-    # accumulated gradients
-    loss = aie_loss.mean(dim=1).sum() / grad_acc
-
-    acc_loss += aie_loss.mean().item()
-    
-    # print("AIE loss", aie_loss.mean().item())
-
+    loss = (target_loss.unsqueeze(-1) - layer_results * target_mask).relu().sum() / TARGET_BATCH
     loss.backward()
-    break
+
+    acc_loss += loss.item()
 
     if counter % (-1 * grad_acc) == -1:
         n_steps += 1
@@ -155,21 +154,14 @@ for no_batches in tqdm(range(10000)):
         acc_loss = 0
 
         if n_steps % -10 == -1:
-            lp.plot(save=f"{folder}/train.png", mv=20)
-            with open(f"{folder}/null_tokens_{causal_layers[0]}_{causal_layers[-1]}.pkl", "wb") as f:
+            lp.plot(["kl_loss"], save=f"{folder}/train.png", mv=20, start=0)
+            lp.plot(["step_sz"], save=f"{folder}/train_step.png", mv=20, start=0)
+            with open(f"{folder}/{node_type}/null_tokens_{causal_layers[0]}_{causal_layers[-1]}.pkl", "wb") as f:
                 pickle.dump(null_token, f)
     else:
         counter += 1
 
 # %%
-target_tokens = target_result.argmax(dim=-1).flatten()
-bij = torch.arange(corrupted_result.shape[0]).to(device)
-probs = target_result[bij, 0, target_tokens].exp()
-corrupted_probs = corrupted_result[bij, 0, target_tokens].exp()
-layer_probs = layer_results[bij, 4, target_tokens].exp()
-
-aie = ((layer_probs - corrupted_probs) / (probs - corrupted_probs)).mean()
-
 # lp = LinePlot(["kl_loss", "step_size"])
 
 # no_batches = 0
@@ -245,12 +237,10 @@ aie = ((layer_probs - corrupted_probs) / (probs - corrupted_probs)).mean()
 # # # %%
 
 
-
 # # with open("utils/datasets/facts/known_1000.json", "r") as f:
 # #     factual_probs = json.load(f)
 
 # # # %%
-
 
 # # # %%
 
@@ -261,3 +251,5 @@ aie = ((layer_probs - corrupted_probs) / (probs - corrupted_probs)).mean()
 # # # %%
 
 # %%
+
+

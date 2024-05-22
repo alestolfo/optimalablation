@@ -155,6 +155,13 @@ with open(f"{ds_path}/{out_file}.pkl", "wb") as f:
 
 # %%
 
+with open(f"{ds_path}/{out_file}.pkl", "wb") as f:
+    pickle.dump(my_dataset, f)
+
+
+
+
+
 
 # %%
 
