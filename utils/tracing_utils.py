@@ -30,9 +30,9 @@ def patch_component_last_token(bsz, layer_idx, act, hook):
     act[layer_idx+1, :, -1] = act[0, :, -1].clone()
     return act.flatten(start_dim=0, end_dim=1)
 
-def patch_component_token_pos(bsz, layer_idx, token_pos, act, hook):
+def patch_component_token_pos(bsz, layer_idx, subject_token_pos, act, hook):
     act = act.unflatten(0, (-1, bsz))
-    act[layer_idx+1, token_pos[:,0], token_pos[:,1]] = act[0, token_pos[:,0], token_pos[:,1]].clone()
+    act[layer_idx+1, subject_token_pos[:,0], subject_token_pos[:,1]] = act[0, subject_token_pos[:,0], subject_token_pos[:,1]].clone()
     return act.flatten(start_dim=0, end_dim=1)
 
 def patch_component_all_tokens(bsz, layer_idx, act, hook):
