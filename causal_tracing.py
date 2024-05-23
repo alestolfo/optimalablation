@@ -19,6 +19,7 @@ import pickle
 from itertools import cycle
 from utils.training_utils import load_model_data, LinePlot
 from torch.utils.data import DataLoader
+from sys import argv
 from utils.tracing_utils import get_subject_tokens, replace_subject_tokens, patch_component_last_token, patch_component_token_pos, patch_component_all_tokens
 
 # %%
@@ -26,6 +27,8 @@ from utils.tracing_utils import get_subject_tokens, replace_subject_tokens, patc
 # filter for correct prompts
 
 sns.set()
+pref_node_type = argv[1]
+pref_device = argv[2]
 
 mode="fact"
 ds_name = "my_facts" if mode == "fact" else "my_attributes"
@@ -37,10 +40,10 @@ TARGET_BATCH = 20
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"
 model_name = "gpt2-xl"
-batch_size = 3
+batch_size = 5
 clip_value = 1e5
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device(pref_device if torch.cuda.is_available() else "cpu")
 model = HookedTransformer.from_pretrained(model_name, device=device)
 tokenizer = model.tokenizer
 tokenizer.padding_side = "left"
@@ -101,7 +104,7 @@ for p in model.parameters():
 window_size = 0
 # attn, mlp
 token_pos_list = ["last_subject", "all_subject", "last"]
-node_type_list = ["attn", "mlp"]
+node_type_list = [pref_node_type]
 
 lp = LinePlot(["kl_loss", "step_sz"])
 
@@ -110,7 +113,7 @@ for token_type in token_pos_list:
     for node_type in node_type_list:
 
         init_token = torch.load(f"{folder}/subject_means.pth")
-        init_token = init_token.unsqueeze(0).repeat(ct_layers+1, 1)
+        init_token = init_token.unsqueeze(0).repeat(ct_layers+1, 1).to(device)
         null_token = torch.nn.Parameter(init_token)
         optimizer = torch.optim.AdamW([null_token], lr=lr, weight_decay=0)
         counter = 0
@@ -118,7 +121,7 @@ for token_type in token_pos_list:
         acc_loss = 0
         optimizer.zero_grad()
 
-        for no_batches in tqdm(range(500 * grad_acc)):
+        for no_batches in tqdm(range(300 * grad_acc)):
             batch = next(data_iter)
 
             tokens, subject_pos = get_subject_tokens(batch, tokenizer, mode=mode)
@@ -133,7 +136,6 @@ for token_type in token_pos_list:
                 patch_token_pos = torch.stack([torch.arange(mask.shape[0]).to(device), last_subject_pos], dim=-1)
             elif token_type == "all_subject":
                 patch_token_pos = subject_pos
-            print(patch_token_pos)
             
             tokens = tokens.repeat(ct_layers + 2, 1)
 
@@ -187,6 +189,9 @@ for token_type in token_pos_list:
                     lp.plot(["kl_loss"], save=f"{folder}/{token_type}_{node_type}_train.png", mv=20, start=0)
                     lp.plot(["step_sz"], save=f"{folder}/{token_type}_{node_type}_train_step.png", mv=20, start=0)
                     with open(f"{folder}_{token_type}_{node_type}_null_tokens_{causal_layers[0]}_{causal_layers[-1]}.pkl", "wb") as f:
+                        pickle.dump(null_token, f)
+                if n_steps % -100 == -1:
+                    with open(f"{folder}_{token_type}_{node_type}_{n_steps}_null_tokens_{causal_layers[0]}_{causal_layers[-1]}.pkl", "wb") as f:
                         pickle.dump(null_token, f)
             else:
                 counter += 1
