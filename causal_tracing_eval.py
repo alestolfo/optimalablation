@@ -17,7 +17,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
 from itertools import cycle
-from utils.training_utils import load_model_data, LinePlot
+from utils.training_utils import load_model_data, LinePlot, gen_resample_perm
 from torch.utils.data import DataLoader
 from utils.tracing_utils import get_subject_tokens, replace_subject_tokens, gauss_subject_tokens, patch_component_token_pos, patch_component_last_token, patch_component_all_tokens
 # %%
@@ -29,9 +29,46 @@ sns.set()
 mode="fact"
 ds_name = "my_facts" if mode == "fact" else "my_attributes"
 ds_path = "utils/datasets/facts"
-folder=f"results/causal_tracing/{mode}"
+base_folder=f"results/causal_tracing/{mode}"
 
 TARGET_BATCH = 20
+
+# %%
+# with open("utils/datasets/facts/my_attributes.pkl", "rb") as f:
+#     attributes_ds = pickle.load(f)
+
+# correct_prompts = []
+# subject_object_pairs = set()
+# rel_names = {}
+# for a_line in attributes_ds:
+#     a_line["attribute"] = a_line["object"]
+#     del a_line["object"]
+#     if (a_line["subject"], a_line["attribute"]) in subject_object_pairs:
+#         # print("dupe")
+#         continue
+#     if a_line['relation_name'] not in rel_names:
+#         rel_names[a_line['relation_name']] = 1
+#     else:
+#         rel_names[a_line['relation_name']] += 1
+#     if rel_names[a_line['relation_name']] >= 40:
+#         continue
+#     subject_object_pairs.add((a_line["subject"], a_line["attribute"]))
+#     correct_prompts.append(a_line)
+
+# with open("utils/datasets/facts/my_facts_old.pkl", "rb") as f:
+#     facts_ds = pickle.load(f)
+
+# for a_line in facts_ds:
+#     if (a_line["subject"], a_line["attribute"]) in subject_object_pairs:
+#         print("dupe")
+#         print(a_line["subject"], a_line["attribute"])
+#         continue
+#     subject_object_pairs.add((a_line["subject"], a_line["attribute"]))
+#     correct_prompts.append(a_line)
+
+# # %%
+# with open("utils/datasets/facts/my_facts.pkl", "wb") as f:
+#     pickle.dump(correct_prompts, f)
 
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"

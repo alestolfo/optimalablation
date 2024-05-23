@@ -21,10 +21,10 @@ from utils.lens_utils import LensExperiment, compile_loss_dfs, corr_plot, overal
 # %%
 sns.set()
 
-model_name = argv[1]
-dir_mode = argv[2]
-# model_name = "gpt2-medium"
-# dir_mode = "vanilla"
+# model_name = argv[1]
+# dir_mode = argv[2]
+model_name = "gpt2-xl"
+dir_mode = "vanilla"
 
 folders = {
     "modal": f"results/lens/{model_name}/oa",
@@ -69,7 +69,8 @@ EXAMPLES_RESAMPLE = 1000
 # model_name = "gpt2-small"
 batch_size = CAUSAL_BATCH_SIZE
 # 100K OWT samples with default sequence length: 235134
-device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size)
+device, model, tokenizer, owt_iter = load_model_data("gpt2-small", batch_size)
+model = HookedTransformer.from_pretrained(model_name, device=device)
 
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads

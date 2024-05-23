@@ -211,6 +211,9 @@ red_shades = plt.cm.Reds(np.linspace( 0.3, 1, 4))
 n_plots = 3
 f, axes = plt.subplots(1, n_plots, figsize=(6 * n_plots, 6))
 
+plt.rc('axes', titlesize=12)     # fontsize of the axes title
+plt.rc('axes', labelsize=20)    # fontsize of the x and y labels
+
 # model_name = "gpt2-medium"
 # all_titles = ["proj_rand", "proj_sing"]
 for j, model_name in enumerate(all_models):
@@ -228,7 +231,7 @@ for j, model_name in enumerate(all_models):
 
     for i, k in enumerate(lens_list):
         if k == "tuned":
-            shade = blue_shades[j]
+            shade = red_shades[j]
             ls = None
         else:
             shade = red_shades[j]
@@ -238,20 +241,20 @@ for j, model_name in enumerate(all_models):
         x = np.arange(n_layers-offset) + offset
 
         ax = sns.lineplot(x=x, y=corrs['points'][k], ax=axes[0], label=f"{model_name}, {ax_labels[k]}", color=shade, linestyle=ls)
-        axes[0].set(xlabel="Layer no", ylabel="Correlation")
+        axes[0].set(xlabel="Layer number", ylabel="Correlation")
 
         ax = sns.lineplot(x=x, y=corrs['dirs'][k], ax=axes[1], label=f"{model_name}, {ax_labels[k]}", color=shade, linestyle=ls)
-        axes[1].set(xlabel="Layer no", ylabel="Correlation")
+        axes[1].set(xlabel="Layer number", ylabel="Correlation")
 
         ax = sns.lineplot(x=x, y=sim_vecs[k], ax=axes[-1], label=f"{model_name}, {ax_labels[k]}", color=shade, linestyle=ls)
-        axes[-1].set(xlabel="Layer no", ylabel="Similarity")
+        axes[-1].set(xlabel="Layer number", ylabel="Similarity")
     
     # m, n = title.split("_")
     # m = {"proj": "projection", "steer": "steering"}[m]
     # n = {"rand": "with random directions", "sing": "with singular vectors"}[n]
 
 titles = {"proj_sing": "basis projection", "proj_rand": "random projection", "steer_rand": "random perturbation", "steer_sing": "basis-aligned purturbation"}
-plt.suptitle(f"Causal faithfulness: {titles[title]}")
+plt.suptitle(f"Causal faithfulness: {titles[title]}", fontsize=24)
 plt.tight_layout()
 f.savefig(f"{overall_folder}/summary_{title}.png")
 plt.show()
@@ -272,6 +275,9 @@ plt.close(f)
     # break
 
 # %%
+plt.rc('axes', titlesize=12)     # fontsize of the axes title
+plt.rc('axes', labelsize=24)    # fontsize of the x and y labels
+
 colors = {"modal": "orange", "tuned": "blue"}
 for model_name in all_models:
     folders = {
@@ -305,24 +311,25 @@ for model_name in all_models:
             x = np.arange(n_layers)
 
             ax = sns.lineplot(x=x, y=corrs['points'][k], ax=axes[0], label=f"{ax_labels[k]} ({n_dirs})", linewidth=math.log(n_dirs) / 2, color=shades[j], linestyle="dashed")
-            axes[0].set(xlabel="Layer no", ylabel="Correlation")
+            axes[0].set(xlabel="Layer number", ylabel="Correlation")
 
             ax = sns.lineplot(x=x, y=sim_vecs[k], ax=axes[-1], label=f"{ax_labels[k]} ({n_dirs})", linewidth=math.log(n_dirs) / 2, color=shades[j], linestyle="dashed")
-            axes[-1].set(xlabel="Layer no", ylabel="Similarity")
+            axes[-1].set(xlabel="Layer number", ylabel="Similarity")
 
-    plt.suptitle(f"Causal faithfulness: resample basis directions, {model_name}")
+    plt.suptitle(f"Causal faithfulness: resample basis directions, {model_name}", fontsize=24)
     plt.tight_layout()
     f.savefig(f"{overall_folder}/{model_name}_summary_resample.png")
     plt.show()
     plt.close(f)
+    
 
 # %%
 
 def get_shades(lens):
-    green_shades = plt.cm.Greens(np.linspace( 1, 0.3, 8))
-    blue_shades = plt.cm.Blues(np.linspace( 1, 0.3,8))
-    red_shades = plt.cm.Reds(np.linspace( 1, 0.3, 8))
-    yellow_shades = plt.cm.YlOrBr(np.linspace( 1, 0.3, 8))
+    green_shades = plt.cm.Greens(np.linspace( 0.8, 0.3, 8))
+    blue_shades = plt.cm.Blues(np.linspace( 0.8, 0.3,8))
+    red_shades = plt.cm.Reds(np.linspace( 0.8, 0.3, 8))
+    yellow_shades = plt.cm.YlOrBr(np.linspace( 0.8, 0.3, 8))
     if lens == "modal":
         shades = red_shades
     elif lens == "tuned":
@@ -335,6 +342,7 @@ def get_shades(lens):
 
 
 for model_name in all_models:
+    print(model_name)
     folders = {
         "modal": f"results/lens/{model_name}/oa",
         "linear_oa": f"results/lens/{model_name}/linear_oa",
@@ -342,16 +350,25 @@ for model_name in all_models:
         "grad": f"results/lens/{model_name}/grad"
     }
     print(model_name)
+    mn = model_name
     lw = [2,1.5, 1,0.5,0.3,0.2,0.1]
     series = {}
-    f = plt.subplots(figsize=(10,10))
+    f = plt.subplots(figsize=(5,5))
     vanilla_losses = torch.load(f"{folders['linear_oa']}/original.pth")
     lens_list = ["mean", "resample", "modal", "tuned"]
     for k in vanilla_losses:
         if k not in lens_list:
             continue
-        sns.lineplot(vanilla_losses[f"{k}"], color=shades[0], linestyle="dashed", label=f"{ax_labels[k]} ({t})", linewidth=lw[i])
-    break
+        # print(k)
+        # print(list(vanilla_losses[f"{k}"]))
+        sns.lineplot(list(vanilla_losses[f"{k}"]), color=get_shades(k)[0], label=f"{ax_labels[k].capitalize()}", linewidth=lw[i])
+        # plt.show()
+        plt.xlabel("Layer number", fontsize=16)
+        plt.ylabel("KL-divergence", fontsize=16)
+        plt.title(f"Lens losses on {mn}", fontsize=20)
+        plt.tight_layout()
+        plt.savefig(f"results/lens/overall-{mn}.png")
+    continue
     causal_losses = torch.load(f"{folders['linear_oa']}/causal_losses.pth")
     for i, t in enumerate(causal_losses):
         for lens in causal_losses[t][2]:
