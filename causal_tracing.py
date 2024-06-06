@@ -19,13 +19,16 @@ import pickle
 from itertools import cycle
 from utils.training_utils import load_model_data, LinePlot
 from torch.utils.data import DataLoader
-from utils.tracing_utils import get_subject_tokens, replace_subject_tokens, patch_component_last_token, patch_component_subject_tokens, patch_component_all_tokens
+from sys import argv
+from utils.tracing_utils import get_subject_tokens, replace_subject_tokens, patch_component_last_token, patch_component_token_pos, patch_component_all_tokens
 
 # %%
 
 # filter for correct prompts
 
 sns.set()
+pref_node_type = argv[1]
+pref_device = argv[2]
 
 mode="fact"
 ds_name = "my_facts" if mode == "fact" else "my_attributes"
@@ -37,10 +40,10 @@ TARGET_BATCH = 20
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"
 model_name = "gpt2-xl"
-batch_size = 10
+batch_size = 5
 clip_value = 1e5
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device(pref_device if torch.cuda.is_available() else "cpu")
 model = HookedTransformer.from_pretrained(model_name, device=device)
 tokenizer = model.tokenizer
 tokenizer.padding_side = "left"
@@ -50,7 +53,7 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 head_dim = model.cfg.d_head
 d_model = model.cfg.d_model
-lr = 2e-3
+lr = 1e-3
 
 # learning hyperparameters
 kl_loss = torch.nn.KLDivLoss(reduction="none")
@@ -62,114 +65,137 @@ resid_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_re
 with open(f"{ds_path}/{ds_name}.pkl", 'rb') as f:
     correct_prompts = pickle.load(f)
 
+# %%
+# all_keys = set()
+# for prompt in correct_prompts:
+#     for k in prompt:
+#         all_keys.add(k)
+
+# for prompt in correct_prompts:
+#     for k in prompt:
+#         if prompt[k] == None:
+#             prompt[k] = ''
+# %%
+train_split = 0.6
+correct_prompts = correct_prompts[:math.ceil(train_split * len(correct_prompts))]
 data_loader = DataLoader(correct_prompts, batch_size=batch_size, shuffle=True)
 data_iter = cycle(iter(data_loader))
 
 # %%
 
-causal_layers = [i for i in range(36,44)]
+causal_layers = [i for i in range(0,48)]
 ct_layers = len(causal_layers)
 
 # init_token = torch.randn((ct_layers + 1, d_model)).to(device)
 
-with open(f"{folder}/null_tokens_{causal_layers[0]}_{causal_layers[-1]}.pkl", "rb") as f:
-    init_token = pickle.load(f)
-# init_token = torch.load(f"{folder}/subject_means.pth")
-# init_token = init_token.unsqueeze(0).repeat(ct_layers+1, 1)
-# %%
-
-null_token = torch.nn.Parameter(init_token)
-optimizer = torch.optim.AdamW([null_token], lr=lr, weight_decay=0)
-
-# %%
+# with open(f"{folder}/null_tokens_{causal_layers[0]}_{causal_layers[-1]}.pkl", "rb") as f:
+#     init_token = pickle.load(f)
+grad_acc = math.ceil(TARGET_BATCH / batch_size)
 attn_out_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_attn_out" 
 mlp_out_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_mlp_out" 
 
-grad_acc = math.ceil(TARGET_BATCH / batch_size)
-counter = 0
+# %%
+
+for p in model.parameters():
+    p.requires_grad = False
 
 # %%
-n_steps = 0
-optimizer.zero_grad()
+
+window_size = 0
+# attn, mlp
+token_pos_list = ["last_subject", "all_subject", "last"]
+node_type_list = [pref_node_type]
+
 lp = LinePlot(["kl_loss", "step_sz"])
 
-acc_loss = 0
-for no_batches in tqdm(range(10000)):
-    batch = next(data_iter)
+# TRAINING RUNS FOR THIS: MLP/ATTN; 0/2/4 WINDOWS; 4 token positions; KL vs train loss.
+for token_type in token_pos_list:
+    for node_type in node_type_list:
 
-    tokens, subject_pos = get_subject_tokens(batch, tokenizer, mode=mode)
-    bsz = tokens.shape[0]
-
-    tokens = tokens.repeat(ct_layers + 2, 1)
-
-    # inference: first is clean, last is corrupted
-    result = model.run_with_hooks(
-        tokens,
-        fwd_hooks = [
-            ("hook_embed", partial(replace_subject_tokens, bsz, subject_pos, null_token)),
-            *[
-                (partial(mlp_out_filter, layer_no), 
-                partial(patch_component_last_token, bsz, j)) 
-                for j, layer_no in enumerate(causal_layers)
-            ]
-        ]
-    )[:,-1].log_softmax(dim=-1)
-
-    result = result.unflatten(0, (-1, bsz))
-
-    target_result = result[0].unsqueeze(1)
-    corrupted_result = result[-1].unsqueeze(1)
-    layer_results = result[1:-1].permute((1,0,2))
-
-    
-
-    # total_loss = kl_loss(corrupted_result, target_result.exp()).sum(dim=-1)
-    # aie_loss = kl_loss(layer_results, target_result.exp()).sum(dim=-1)
-
-    # print("Total loss", total_loss.item())
-
-    # accumulated gradients
-    loss = aie_loss.mean(dim=1).sum() / grad_acc
-
-    acc_loss += aie_loss.mean().item()
-    
-    # print("AIE loss", aie_loss.mean().item())
-
-    loss.backward()
-    break
-
-    if counter % (-1 * grad_acc) == -1:
-        n_steps += 1
+        init_token = torch.load(f"{folder}/subject_means.pth")
+        init_token = init_token.unsqueeze(0).repeat(ct_layers+1, 1).to(device)
+        null_token = torch.nn.Parameter(init_token)
+        optimizer = torch.optim.AdamW([null_token], lr=lr, weight_decay=0)
         counter = 0
-
-        prev_bias = null_token.clone()
-
-        optimizer.step()
+        n_steps = 0
+        acc_loss = 0
         optimizer.zero_grad()
 
-        lp.add_entry({
-            "kl_loss": acc_loss / grad_acc,
-            "step_sz": (prev_bias - null_token).norm(dim=-1).mean().item(),
-        })
+        for no_batches in tqdm(range(300 * grad_acc)):
+            batch = next(data_iter)
 
-        acc_loss = 0
+            tokens, subject_pos = get_subject_tokens(batch, tokenizer, mode=mode)
+            bsz = tokens.shape[0]
 
-        if n_steps % -10 == -1:
-            lp.plot(save=f"{folder}/train.png", mv=20)
-            with open(f"{folder}/null_tokens_{causal_layers[0]}_{causal_layers[-1]}.pkl", "wb") as f:
-                pickle.dump(null_token, f)
-    else:
-        counter += 1
+            if token_type == "last":
+                patch_token_pos = None
+            elif token_type == "last_subject":
+                mask = torch.zeros_like(tokens).to(device)
+                mask[subject_pos[:,0], subject_pos[:,1]] = 1
+                last_subject_pos = (mask * torch.arange(mask.shape[-1]).to(device)).argmax(dim=-1)
+                patch_token_pos = torch.stack([torch.arange(mask.shape[0]).to(device), last_subject_pos], dim=-1)
+            elif token_type == "all_subject":
+                patch_token_pos = subject_pos
+            
+            tokens = tokens.repeat(ct_layers + 2, 1)
 
+            # inference: first is clean, last is corrupted
+            result = model.run_with_hooks(
+                tokens,
+                fwd_hooks = [
+                    ("hook_embed", partial(replace_subject_tokens, bsz, subject_pos, null_token)),
+                    *[
+                        (partial(attn_out_filter if node_type == "attn" 
+                                else mlp_out_filter, layer_no), 
+                        partial(patch_component_last_token, bsz, j) if token_type == "last"
+                        else partial(patch_component_token_pos, bsz, j, patch_token_pos)) 
+                        for j, layer_no in enumerate(causal_layers)
+                    ]
+                ]
+            )[:,-1].log_softmax(dim=-1)
+
+            result = result.unflatten(0, (-1, bsz))
+
+            target_result = result[0].unsqueeze(1)
+            layer_results = result[1:].permute((1,0,2))
+
+            target_loss, target_tokens = target_result.max(dim=-1)
+            target_tokens = target_tokens.flatten()
+            target_mask = torch.zeros_like(target_result).to(device)
+            target_mask[torch.arange(target_result.shape[0]).to(device),0,target_tokens] = 1
+            
+            loss = (target_loss.unsqueeze(-1) - layer_results * target_mask).relu().sum() / TARGET_BATCH
+            loss.backward()
+
+            acc_loss += loss.item()
+
+            if counter % (-1 * grad_acc) == -1:
+                n_steps += 1
+                counter = 0
+
+                prev_bias = null_token.clone()
+
+                optimizer.step()
+                optimizer.zero_grad()
+
+                lp.add_entry({
+                    "kl_loss": acc_loss / grad_acc,
+                    "step_sz": (prev_bias - null_token).norm(dim=-1).mean().item(),
+                })
+
+                acc_loss = 0
+
+                if n_steps % -10 == -1:
+                    lp.plot(["kl_loss"], save=f"{folder}/{token_type}_{node_type}_train.png", mv=20, start=0)
+                    lp.plot(["step_sz"], save=f"{folder}/{token_type}_{node_type}_train_step.png", mv=20, start=0)
+                    with open(f"{folder}_{token_type}_{node_type}_null_tokens_{causal_layers[0]}_{causal_layers[-1]}.pkl", "wb") as f:
+                        pickle.dump(null_token, f)
+                if n_steps % -100 == -1:
+                    with open(f"{folder}_{token_type}_{node_type}_{n_steps}_null_tokens_{causal_layers[0]}_{causal_layers[-1]}.pkl", "wb") as f:
+                        pickle.dump(null_token, f)
+            else:
+                counter += 1
 # %%
-target_tokens = target_result.argmax(dim=-1).flatten()
-bij = torch.arange(corrupted_result.shape[0]).to(device)
-probs = target_result[bij, 0, target_tokens].exp()
-corrupted_probs = corrupted_result[bij, 0, target_tokens].exp()
-layer_probs = layer_results[bij, 4, target_tokens].exp()
-
-aie = ((layer_probs - corrupted_probs) / (probs - corrupted_probs)).mean()
-
 # lp = LinePlot(["kl_loss", "step_size"])
 
 # no_batches = 0
@@ -244,13 +270,10 @@ aie = ((layer_probs - corrupted_probs) / (probs - corrupted_probs)).mean()
 
 # # # %%
 
-
-
 # # with open("utils/datasets/facts/known_1000.json", "r") as f:
 # #     factual_probs = json.load(f)
 
 # # # %%
-
 
 # # # %%
 
@@ -261,3 +284,5 @@ aie = ((layer_probs - corrupted_probs) / (probs - corrupted_probs)).mean()
 # # # %%
 
 # %%
+
+
