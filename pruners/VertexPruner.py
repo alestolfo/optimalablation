@@ -25,6 +25,7 @@ class VertexPruner(torch.nn.Module):
 
                  # some ablation types need to run cache
                  counterfactual_mode=False, 
+                 pos_constants_mode=False,
                  ablation_backward=False
                  ):
         super().__init__()
@@ -41,6 +42,7 @@ class VertexPruner(torch.nn.Module):
         self.disable_hooks = False
 
         self.counterfactual_mode = counterfactual_mode
+        self.pos_constants_mode = pos_constants_mode
 
         columns = ['kl_loss', *self.mask_sampler.log_columns]
         self.log = LinePlot(columns)
@@ -55,25 +57,38 @@ class VertexPruner(torch.nn.Module):
     def add_patching_hooks(self):
         for name, hook in self.patching_hooks:
             self.base_model.add_hook(name, hook)
+    
+    def retrieve_null_val(self, layer_no, vertex_type, expected_length):
+        if vertex_type == "attention":
+            null_val = self.modal_attention[layer_no]
+        elif vertex_type == "mlp":
+            null_val = self.modal_mlp[layer_no]
+        else:
+            raise Exception("vertex type")
+        
+        if self.pos_constants_mode:
+            if expected_length - 1 <= null_val.shape[0]:
+                null_val = null_val[:expected_length]
+            else:
+                null_val = torch.cat([
+                    null_val[:-1],
+                    null_val[[-1]].repeat(expected_length - null_val.shape[0], 1, 1)
+                ], dim=0)
+            
+        return null_val
 
-    def retrieve_cached_attn(self, layer_no):
-        return self.modal_attention[layer_no]
-    
-    def retrieve_mode_attn(self, layer_no):
-        return self.modal_attention[layer_no]
-    
     # attentions: (batch_size + batch_size * n_samples) x seq_len x n_heads x d_model
     # constants: n_heads x d_head
     # prune mask: (batch_size * n_samples) x n_heads, 0 = prune, 1 = keep
     def pruning_hook_attention_all_tokens(self, layer_no, attentions, hook):
+        bsz = self.pruning_cfg.batch_size
         if self.counterfactual_mode:
             # first batch_size are counterfactual, then next batch_size are true
-            bsz = 2 * self.pruning_cfg.batch_size
+            bsz = 2 * bsz
             null_val = attentions[:bsz // 2].repeat(self.pruning_cfg.n_samples, 1, 1, 1)
         else:
-            bsz = self.pruning_cfg.batch_size
-            null_val = self.modal_attention[layer_no]
-
+            null_val = self.retrieve_null_val(layer_no, "attention", attentions.shape[1])
+        
         try:
             bos_out = attentions[:,[0]].clone().detach()
             prune_mask = self.mask_sampler.sampled_mask['attn'][layer_no].unsqueeze(1).unsqueeze(-1)
@@ -104,13 +119,13 @@ class VertexPruner(torch.nn.Module):
     # constants: d_model
     # prune mask: (batch_size * n_samples), 0 = prune, 1 = keep
     def pruning_hook_mlp_all_tokens(self, layer_no, mlp_out, hook):
+        bsz = self.pruning_cfg.batch_size
         if self.counterfactual_mode:
             # first batch_size are counterfactual, then next batch_size are true
-            bsz = 2 * self.pruning_cfg.batch_size
+            bsz = 2 * bsz
             null_val = mlp_out[:bsz // 2].repeat(self.pruning_cfg.n_samples, 1, 1)
         else:
-            bsz = self.pruning_cfg.batch_size
-            null_val = self.modal_mlp[layer_no]
+            null_val = self.retrieve_null_val(layer_no, "mlp", mlp_out.shape[1])
 
         try:
             bos_out = mlp_out[:,[0]].clone().detach()

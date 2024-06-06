@@ -6,6 +6,7 @@ from matplotlib.ticker import MultipleLocator, AutoMinorLocator
 from matplotlib.ticker import FormatStrFormatter
 import glob
 import os
+import torch
 import pandas as pd
 
 sns.set(rc={"xtick.bottom" : True, "ytick.left" : True})
@@ -34,8 +35,9 @@ def plot_points(k, x, color=None, suffix=""):
     log_file = f"{x}/post_training{suffix}.pkl"
     print(log_file)
     if os.path.exists(log_file):
-        with open(log_file, "rb") as f:
-            log = pickle.load(f)
+        # with open(log_file, "rb") as f:
+        #     log = pickle.load(f)
+        log = torch.load(log_file, map_location=('cpu'))
         # print(log)
 
         for i, lamb in enumerate(log['lamb']):

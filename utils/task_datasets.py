@@ -29,6 +29,39 @@ class TaskDataset():
         self.batch_size = batch_size
         self.device = device
 
+    def process_means(self, all_means, samples, cutoff=None):
+        if cutoff:
+            min_length = cutoff
+        else:
+            min_length = (torch.arange(samples.shape[0]).to(self.device) * (samples == samples.max())).argmax().item()
+
+        processed_means = []
+        for means in all_means:
+            general_mean = (means[min_length:].permute(0,-1) * samples[min_length:]).sum(dim=-1) / samples[min_length].sum()
+            processed_means.append(
+                (torch.cat((means[:min_length],general_mean[:, None]), dim=0)
+                 if cutoff is None else general_mean).transpose(0,1)
+            )
+        return processed_means
+
+    def init_modes(self, cf=False, oa_init=False):
+        if cf:
+            cf_tag = "cf_"
+        else:
+            cf_tag = ""
+
+        with open(f"results/oca/ioi/means_{cf_tag}attention.pkl", "rb") as f:
+            #  seq_len x n_layers x n_heads x d_head
+            init_modes_attention = pickle.load(f)
+        with open(f"results/oca/ioi/means_{cf_tag}mlp.pkl", "rb") as f:
+            # seq_len x n_layers x d_model
+            init_modes_mlp = pickle.load(f)
+        with open(f"results/oca/ioi/means_{cf_tag}samples.pkl", "rb") as f:
+            # seq_len
+            samples = pickle.load(f)
+            
+        return self.process_means([init_modes_attention, init_modes_mlp], samples, cutoff=9 if oa_init else None)
+
     def next_batch(self, tokenizer, test=False, counterfactual=False):
         return None, None, None
 
@@ -56,61 +89,52 @@ class OWTConfig():
         self.ds_iter = owt_iter
         self.device = device
     
-    def init_modes(self):
-        with open("results/oca/owt/means_attention.pkl", "rb") as f:
-            # n_layers x n_heads x d_model
-            init_modes_attention = pickle.load(f)
-        with open("results/oca/owt/means_mlp.pkl", "rb") as f:
-            # n_layers x n_heads x d_model
-            init_modes_mlp = pickle.load(f)
-        return init_modes_attention[:,-1], init_modes_mlp[:,-1]
-
     def next_batch(self, tokenizer=None):
         # BOS is already prepended
         batch = next(self.ds_iter)['tokens'].to(self.device)
         return batch, batch.shape[1] - 1
     
-class IOIConfigDiverse(TaskDataset):
-    def __init__(self, batch_size, device, test_size=10000):
-        super().__init__(batch_size, device)
+# class IOIConfigDiverse(TaskDataset):
+#     def __init__(self, batch_size, device, test_size=10000):
+#         super().__init__(batch_size, device)
         
-        ioi_ds = datasets.load_from_disk("../plausibleablation/data/ioi/ioi")
+#         ioi_ds = datasets.load_from_disk("../plausibleablation/data/ioi/ioi")
 
-        generator = torch.Generator().manual_seed(6942)
-        test_set, train_set = torch.utils.data.random_split(ioi_ds['train'], [test_size,len(ioi_ds['train']) - test_size], generator=generator)
+#         generator = torch.Generator().manual_seed(6942)
+#         test_set, train_set = torch.utils.data.random_split(ioi_ds['train'], [test_size,len(ioi_ds['train']) - test_size], generator=generator)
 
-        ioi_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory=True)
-        ioi_iter = cycle(iter(ioi_loader))
+#         ioi_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory=True)
+#         ioi_iter = cycle(iter(ioi_loader))
 
-        self.ds_iter = ioi_iter
-        self.ds_test = DataLoader(test_set, batch_size=batch_size)
-        self.test_iter = cycle(iter(self.ds_test))
+#         self.ds_iter = ioi_iter
+#         self.ds_test = DataLoader(test_set, batch_size=batch_size)
+#         self.test_iter = cycle(iter(self.ds_test))
         
-    def init_modes(self):
-        with open("results/oca/ioi/means_attention.pkl", "rb") as f:
-            #  n_layers x 10 (seq_len) x n_heads x d_head
-            init_modes_attention = pickle.load(f)
-        with open("results/oca/ioi/means_mlp.pkl", "rb") as f:
-            #  n_layers x 10 (seq_len) x d_model
-            init_modes_mlp = pickle.load(f)
-        return init_modes_attention[:,-1], init_modes_mlp[:,-1]
+#     def init_modes(self):
+#         with open("results/oca/ioi/means_attention.pkl", "rb") as f:
+#             #  n_layers x 10 (seq_len) x n_heads x d_head
+#             init_modes_attention = pickle.load(f)
+#         with open("results/oca/ioi/means_mlp.pkl", "rb") as f:
+#             #  n_layers x 10 (seq_len) x d_model
+#             init_modes_mlp = pickle.load(f)
+#         return init_modes_attention[:,-1], init_modes_mlp[:,-1]
 
-    def next_batch(self, tokenizer, test=False, counterfactual=False):
-        b = next(self.test_iter if test else self.ds_iter)
+#     def next_batch(self, tokenizer, test=False, counterfactual=False):
+#         b = next(self.test_iter if test else self.ds_iter)
 
-        # remove label, it can be more than one token
-        # batch = [s.rsplit(' ', 1)[0] for s in b['ioi_sentences']]
-        batch = b['ioi_sentences']
+#         # remove label, it can be more than one token
+#         # batch = [s.rsplit(' ', 1)[0] for s in b['ioi_sentences']]
+#         batch = b['ioi_sentences']
 
-        batch = tokenizer(batch, padding=True, return_tensors='pt')['input_ids'].to(self.device)
+#         batch = tokenizer(batch, padding=True, return_tensors='pt')['input_ids'].to(self.device)
         
-        # prepend bos token
-        batch = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(batch.shape[0],1).to(self.device),batch], dim=1)
+#         # prepend bos token
+#         batch = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(batch.shape[0],1).to(self.device),batch], dim=1)
 
-        # last_token_pos is the last token position in the prompt (NOT the label position)
-        last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(self.device)).argmax(dim=-1) - 1
+#         # last_token_pos is the last token position in the prompt (NOT the label position)
+#         last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(self.device)).argmax(dim=-1) - 1
         
-        return batch, last_token_pos
+#         return batch, last_token_pos
 
 class IOIConfig(TaskDataset):
     def __init__(self, batch_size, device, fix_prompt=False):
@@ -119,20 +143,6 @@ class IOIConfig(TaskDataset):
         self.seed = 0
         self.fix_prompt = fix_prompt
         
-    def init_modes(self, cf=False):
-        if cf:
-            cf_tag = "cf_"
-        else:
-            cf_tag = ""
-
-        with open(f"results/oca/ioi/means_{cf_tag}attention.pkl", "rb") as f:
-            #  n_layers x 10 (seq_len) x n_heads x d_head
-            init_modes_attention = pickle.load(f)
-        with open(f"results/oca/ioi/means_{cf_tag}mlp.pkl", "rb") as f:
-            # n_layers x 10 (seq_len) x d_model
-            init_modes_mlp = pickle.load(f)
-        return init_modes_attention[:,-1], init_modes_mlp[:,-1]
-
     def next_batch(self, tokenizer, test=False, counterfactual=False):
         ioi_dataset = IOIDataset(
             prompt_type="ABBA",
@@ -169,27 +179,6 @@ class GTConfig(TaskDataset):
 
         self.years_to_sample_from = None
 
-    def init_modes(self, cf=False):
-        if cf:
-            cf_tag = "cf_"
-        else:
-            cf_tag = ""
-
-        with open(f"results/oca/gt/means_{cf_tag}attention.pkl", "rb") as f:
-            #  n_layers x 10 (seq_len) x n_heads x d_head
-            init_modes_attention = pickle.load(f)
-        with open(f"results/oca/gt/means_{cf_tag}mlp.pkl", "rb") as f:
-            #  n_layers x 10 (seq_len) x d_model
-            init_modes_mlp = pickle.load(f)
-        return init_modes_attention[:,-1], init_modes_mlp[:,-1]
-        # with open("modes/gt/means_attention.pkl", "rb") as f:
-        #     # n_layers x n_heads x d_model
-        #     init_modes_attention = pickle.load(f)
-        # with open("modes/gt/means_mlp.pkl", "rb") as f:
-        #     # n_layers x n_heads x d_model
-        #     init_modes_mlp = pickle.load(f)
-        # return init_modes_attention, init_modes_mlp
-
     def next_batch(self, tokenizer, test=False, counterfactual=False):
         if self.years_to_sample_from is None:
             self.years_to_sample_from = get_valid_years(tokenizer, 1000, 1900)
@@ -216,28 +205,26 @@ class GTConfig(TaskDataset):
         else:
             return batch, last_token_pos
 
-# NOT WORKING
-class ColorConfig():
-    def __init__(self, batch_size, device):
-        self.batch_size = batch_size
-        self.device = device
+# class ColorConfig():
+#     def __init__(self, batch_size, device):
+#         self.batch_size = batch_size
+#         self.device = device
         
-        with open("color_objects/task.json") as f:
-            color_ds = json.load(f)
+#         with open("color_objects/task.json") as f:
+#             color_ds = json.load(f)
 
-        self.ds_iter = cycle(color_ds['examples'][:1500])
+#         self.ds_iter = cycle(color_ds['examples'][:1500])
         
-    def next_batch(self, tokenizer):
-        batch = tokenizer(["Q: " + next(self.ds_iter)['input'] + " A: It's a" for _ in range(self.batch_size)], padding=True, return_tensors='pt')['input_ids'].to(self.device)
-        last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(self.device)).argmax(dim=-1)
-        return batch, last_token_pos
-
+#     def next_batch(self, tokenizer):
+#         batch = tokenizer(["Q: " + next(self.ds_iter)['input'] + " A: It's a" for _ in range(self.batch_size)], padding=True, return_tensors='pt')['input_ids'].to(self.device)
+#         last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(self.device)).argmax(dim=-1)
+#         return batch, last_token_pos
 
 def get_task_ds(dataset, bsz, device, fix_prompt=False):
     if dataset == "ioi":
         task_ds = IOIConfig(bsz, device, fix_prompt=fix_prompt)
-    elif dataset == "ioi_b":
-        task_ds = IOIConfigDiverse(bsz, device)
+    # elif dataset == "ioi_b":
+    #     task_ds = IOIConfigDiverse(bsz, device)
     elif dataset == "gt":
         task_ds = GTConfig(bsz, device)
     else:

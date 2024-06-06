@@ -120,6 +120,25 @@ class EdgePruner(torch.nn.Module):
         # do inference on one example
         return activations[:max(1, squeeze_activations)]
 
+    def retrieve_null_val(self, layer_no, vertex_type, expected_length):
+        if vertex_type == "attention":
+            null_val = self.modal_attention[:layer_no]
+        elif vertex_type == "mlp":
+            null_val = self.modal_mlp[:layer_no]
+        else:
+            raise Exception("vertex type")
+        
+        if self.pos_constants_mode:
+            if expected_length - 1 <= null_val.shape[0]:
+                null_val = null_val[:expected_length]
+            else:
+                null_val = torch.cat([
+                    null_val[:-1],
+                    null_val[[-1]].repeat(expected_length - null_val.shape[0], 1, 1)
+                ], dim=0)
+            
+        return null_val
+
     # attention_constants: list of all constants for attention for layers thus far
     # mlp_constants: list of all constants for embed+mlp layers thus far
     # attention_cache: contains all attentions stored thus far, list of attention outputs by later
@@ -156,7 +175,7 @@ class EdgePruner(torch.nn.Module):
                 null_mlp = torch.stack(self.cf_mlp_cache, dim=-2).unsqueeze(dim=2).detach()
                 null_mlp = null_mlp.repeat((self.pruning_cfg.n_samples, *[1 for _ in null_mlp.shape[1:]]))
             else:
-                null_mlp = self.modal_mlp[:layer_no+1]
+                null_mlp = self.retrieve_null_val(layer_no+1, "mlp", out.shape[1])
 
             out = out + (
                 (mlp_mask < 0.001) * (1-mlp_mask) * null_mlp
@@ -171,7 +190,7 @@ class EdgePruner(torch.nn.Module):
                 null_attn = torch.stack(self.cf_attention_cache, dim=-3).unsqueeze(dim=2).detach()
                 null_attn = null_attn.repeat((self.pruning_cfg.n_samples, *[1 for _ in null_attn.shape[1:]]))
             else:
-                null_attn = self.modal_attention[:layer_no]
+                null_attn = self.retrieve_null_val(layer_no, "attention", out.shape[1])
             
             # print(len(self.mask_sampler.sampled_mask["attn-attn"]))
             # print(layer_no)
@@ -235,17 +254,17 @@ class EdgePruner(torch.nn.Module):
         # mlp_cache: (i+1) * [(bsz * n_samples) x seq_pos x d_model]
 
         try:
+            # (bsz * n_samples) x 1 (seq_pos) x i x 1 (d_model)
+            mlp_mask = self.mask_sampler.sampled_mask["mlp-mlp"][layer_no].unsqueeze(1).unsqueeze(-1)
+
+            out = (mlp_mask * torch.stack(self.mlp_cache, dim=2)).sum(dim=2)
+
             if self.counterfactual_mode:
                 # bsz x seq_pos x i x 1 (d_model)
                 null_mlp = torch.stack(self.cf_mlp_cache, dim=2).detach()
                 null_mlp = null_mlp.repeat((self.pruning_cfg.n_samples, *[1 for _ in null_mlp.shape[1:]]))
             else:
-                null_mlp = self.modal_mlp[:layer_no+1]
-
-            # (bsz * n_samples) x 1 (seq_pos) x i x 1 (d_model)
-            mlp_mask = self.mask_sampler.sampled_mask["mlp-mlp"][layer_no].unsqueeze(1).unsqueeze(-1)
-
-            out = (mlp_mask * torch.stack(self.mlp_cache, dim=2)).sum(dim=2)
+                null_mlp = self.retrieve_null_val(layer_no+1, "mlp", out.shape[1])
 
             out = out + (
                 (mlp_mask < 0.001) * (1-mlp_mask) * null_mlp
@@ -257,7 +276,7 @@ class EdgePruner(torch.nn.Module):
                 null_attn = torch.stack(self.cf_attention_cache, dim=-3).detach()
                 null_attn = null_attn.repeat((self.pruning_cfg.n_samples, *[1 for _ in null_attn.shape[1:]]))
             else:
-                null_attn = self.modal_attention[:attn_layers_before]
+                null_attn = self.retrieve_null_val(attn_layers_before, "attention", out.shape[1])
 
             # print((out - mlp_cache[0]).square().sum())
             
