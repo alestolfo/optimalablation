@@ -27,7 +27,7 @@ from utils.tracing_utils import get_subject_tokens
 sns.set()
 
 ds_path = "utils/datasets/facts"
-folder="results/causal_tracing"
+folder="results/ct-new"
 
 # "attribute", "fact"
 mode = "fact"
@@ -58,6 +58,7 @@ resid_points_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_re
 with open(f"{ds_path}/{ds_name}.pkl", 'rb') as f:
     ds = pickle.load(f)
 
+train_split = 0.6
 train_split = math.floor(0.6 * len(ds))
 data_loader = DataLoader(ds[:train_split], batch_size=batch_size, shuffle=True)
 data_iter = iter(data_loader)
@@ -73,12 +74,13 @@ activation_storage = []
 for batch in tqdm(data_iter):
     tokens, subject_token_pos = get_subject_tokens(batch, tokenizer)
     
-    model.run_with_hooks(
-        tokens, 
-        fwd_hooks=[
-            ("hook_embed", partial(save_subject_token, subject_token_pos, activation_storage))
-        ]
-    )
+    with torch.no_grad():
+        model.run_with_hooks(
+            tokens, 
+            fwd_hooks=[
+                ("hook_embed", partial(save_subject_token, subject_token_pos, activation_storage))
+            ]
+        )
 
 subject_means = torch.cat(activation_storage, dim=0).mean(dim=0)
 torch.save(subject_means, f"{folder}/{mode}/subject_means.pth")

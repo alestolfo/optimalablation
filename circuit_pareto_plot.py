@@ -6,8 +6,11 @@ from matplotlib.ticker import MultipleLocator, AutoMinorLocator
 from matplotlib.ticker import FormatStrFormatter
 import glob
 import os
-import torch
+import math
 import pandas as pd
+import numpy as np
+import matplotlib.ticker as ticker
+
 
 sns.set(rc={"xtick.bottom" : True, "ytick.left" : True})
 # plt.rcParams.update({"xtick.bottom" : True, "ytick.left" : True})
@@ -27,6 +30,20 @@ with open("results/pruning/gt/oa/hc/post_training.pkl", "wb") as f:
 
 
 # %%
+
+CORR_SIZE = 20
+SMALL_SIZE = 18
+MEDIUM_SIZE = 20
+BIGGER_SIZE = 24
+
+plt.rc('font', size=SMALL_SIZE)          # controls default text sizes
+plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
+plt.rc('axes', labelsize=MEDIUM_SIZE)    # fontsize of the x and y labels
+plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('legend', fontsize=CORR_SIZE)    # legend fontsize
+plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
+
 task_lookup = {"ioi": "IOI", "gt": "Greater-Than"}
 ablation_lookup = {"mean": "mean", "cf": "counterfactual", "resample": "resample", "oa": "optimal"}
 
@@ -35,9 +52,8 @@ def plot_points(k, x, color=None, suffix=""):
     log_file = f"{x}/post_training{suffix}.pkl"
     print(log_file)
     if os.path.exists(log_file):
-        # with open(log_file, "rb") as f:
-        #     log = pickle.load(f)
-        log = torch.load(log_file, map_location=('cpu'))
+        with open(log_file, "rb") as f:
+            log = pickle.load(f)
         # print(log)
 
         for i, lamb in enumerate(log['lamb']):
@@ -45,7 +61,7 @@ def plot_points(k, x, color=None, suffix=""):
                 manual_run = {}
                 for ke in log:
                     manual_run[ke] = log[ke].pop(i)
-                plt.plot(manual_run["clipped_edges"], manual_run["losses"], '*', markersize=20, color="orange", label="manual")
+                plt.plot(manual_run["clipped_edges"], manual_run["losses"], 'x', mew=7, markersize=15, color="red", label="manual")
 
         loss_line = pd.DataFrame({
             "clipped_edges": log["clipped_edges"],
@@ -54,10 +70,10 @@ def plot_points(k, x, color=None, suffix=""):
         loss_line["losses"] = loss_line["losses"].cummin()
             
         if color is not None:
-            ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k}", marker="X", s=100, color=color)
-            ax = sns.lineplot(x=loss_line["clipped_edges"], y=loss_line["losses"], color=color, linewidth=0.5)
+            ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k}", marker="o", s=30, color=color)
+            ax = sns.lineplot(x=loss_line["clipped_edges"], y=loss_line["losses"], color=color, linewidth=1.5)
         else:
-            ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k}", marker="X", s=50)
+            ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k}", marker="o", s=50)
         
         for i,t in enumerate(log['tau']):
             if 'vertices' in log:
@@ -69,19 +85,14 @@ def plot_points(k, x, color=None, suffix=""):
         return
     return ax
 
-def plot_pareto(pms, log=False, suffix=""):
+
+# plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
+# plt.rc('axes', labelsize=20)    # fontsize of the x and y labels
+
+def plot_pareto(pms, log=False, suffix="", order=None):
     folder, manual_folder, y_bound, x_bound, task_name = pms
 
     fig = plt.figure(figsize=(8,8))
-    for k, (x, color) in manual_folder.items():
-        print(k)
-        plot_points(k, x, color)
-        if os.path.exists(f"{x}/pre_training.pkl"):
-            with open(f"{x}/pre_training.pkl", "rb") as f:
-                log = pickle.load(f)
-            print(log)
-            sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label="pre training", marker="X", s=50)
-
     for k, (x, color) in folder.items():
         ax = None
         print(x)
@@ -113,7 +124,16 @@ def plot_pareto(pms, log=False, suffix=""):
             plot_points(k, x, color, suffix)
         else:
             plot_points(k, x, color)
-        
+
+    for k, (x, color) in manual_folder.items():
+        print(k)
+        plot_points(k, x, color)
+        if os.path.exists(f"{x}/pre_training.pkl"):
+            with open(f"{x}/pre_training.pkl", "rb") as f:
+                log = pickle.load(f)
+            print(log)
+            sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label="pre training", marker="X", s=50)
+
     plt.xlim(0,x_bound)
     # plt.gca().xaxis.set_major_locator(MultipleLocator(200)) # x gridlines every 0.5 units
     # plt.gca().xaxis.set_minor_locator(AutoMinorLocator(2)) # x gridlines every 0.5 units
@@ -121,25 +141,70 @@ def plot_pareto(pms, log=False, suffix=""):
     plt.tick_params(which='minor', bottom=False, left=False)
     # formatter = LogFormatter(labelOnlyBase=False, minor_thresholds=(2, 0.4))
 
-    plt.grid(visible=True, which='major', color='grey', linewidth=1)
-    plt.grid(visible=True, which='minor', color='grey', linewidth=0.5)
+    plt.grid(visible=True, which='major', color='grey', linewidth=0.5)
+    plt.grid(visible=True, which='minor', color='darkgoldenrod', linewidth=0.3)
     # plt.gca().yaxis.set_major_locator(MultipleLocator(0.01)) # y gridlines every 0.5 units
     plt.xlabel("Edges in circuit")
     plt.ylabel("KL loss")
 
+    def myLogFormat(y,pos):
+        # print(y)
+        # Find the number of decimal places required
+        # decimalplaces = int(np.maximum(-np.log10(y),0))     # =0 for numbers >=1
+        decimalplaces = math.floor(np.log10(y))   # =0 for numbers >=1
+
+        first_digit = str(round(y * 1000)).strip("0.")
+        if len(first_digit) == 0:
+            return
+        if first_digit[0] != "1" and first_digit[0] != "5" and first_digit[0] != "2":
+            return ""
+        
+        if decimalplaces >= 0:
+            return first_digit[0] + "".join(decimalplaces * ["0"])
+        else:
+            # print("0." +  "".join((-1- decimalplaces) * ["0"]) + first_digit[0])
+            return "0." +  "".join((-1- decimalplaces) * ["0"]) + first_digit[0]
+        
+    def majorF(y,pos):
+        # Find the number of decimal places required
+        decimalplaces = int(np.maximum(-np.log10(y),0))     # =0 for numbers >=1
+        # Insert that number into a format string
+        formatstring = '{{:.{:1d}f}}'.format(decimalplaces)
+        # Return the formatted tick label
+        print(formatstring.format(y))
+        return formatstring.format(y)
+
+
+        # return first_digit[0] *
+        # print('{{:.{:2d}f}}')
+        # # Insert that number into a format string
+        # formatstring = '{{:.{:' + first_digit + 'd}f}}'.format(decimalplaces)
+        # # Return the formatted tick label
+        # print(formatstring.format(y))
+        # return formatstring.format(y).replace("1", first_digit)
+
     if log:
         plt.yscale("log")
-        plt.gca().yaxis.set_major_formatter(FormatStrFormatter("%.2f"))
-        plt.gca().yaxis.set_minor_formatter(FormatStrFormatter("%.3f"))
+        plt.gca().yaxis.set_major_formatter(ticker.FuncFormatter(myLogFormat))
+        plt.gca().yaxis.set_minor_formatter(ticker.FuncFormatter(myLogFormat))
     else:
         plt.ylim(0,y_bound)
 
     t, a = task_name.split("/", 1)
     if a in ablation_lookup:
-        abl_type = f"with {ablation_lookup[a]} ablation"
+        abl_type = f"{ablation_lookup[a]} ablation"
     else:
-        abl_type = f"ablation type comparison"
-    plt.title(f"{task_lookup[t]} circuits {abl_type}")
+        abl_type = f"ablation comparison"
+    if order:
+        handles, labels = plt.gca().get_legend_handles_labels()
+        if labels[2] == "manual":
+            h2 = plt.Line2D([0], [0], marker='x', markersize=8, mew=4, color='red', linestyle='None')
+            handles[2] = h2
+        legend = plt.legend([handles[idx] for idx in order],[labels[idx] for idx in order])
+
+    plt.suptitle(f"{task_lookup[t]} circuits, {abl_type}")
+    plt.tight_layout()
+
     plt.savefig(f"results/pareto/{task_name}_pt_{'log' if log else 'c'}{suffix}.png")
     plt.show()
 
@@ -160,18 +225,39 @@ for dataset, ablation_type, x_bound, y_bound in l:
     # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
     folders=({
             # "vertex": "results/pruning_vertices_auto/ioi", 
+            "UGS (ours)": (f"{root_folder}/unif", "black"), 
             "HCGS": (f"{root_folder}/hc", "blue"), 
-            "UGS": (f"{root_folder}/unif", "red"), 
             # "edges uniform window": "results/pruning/ioi/cf/unif_window", 
         }, {
-            "ACDC": (f"{root_folder}/acdc", "black"),
+            "ACDC": (f"{root_folder}/acdc", "crimson"),
             "EAP": (f"{root_folder}/eap", "green")
         }, x_bound, y_bound, f"{dataset}/{ablation_type}")
-    for log in [False, True]:
-        plot_pareto(folders, log=log)
-
+    for log in [True]:
+        plot_pareto(folders, log=log, order=[0,1,4,3,2])
 # %%
 
+import matplotlib.pyplot as plt
+import numpy as np
+
+def rand_data():
+    return np.random.uniform(low=0., high=1., size=(100,))
+
+# Generate data.
+x1, y1 = [rand_data() for i in range(2)]
+x2, y2 = [rand_data() for i in range(2)]
+
+plt.figure()
+plt.plot(x1, y1, 'o', label='first', markersize=np.sqrt(20.), c='b')
+plt.plot(x2, y2, 'o', label='second', markersize=np.sqrt(35.), c='r')
+# Plot legend.
+lgnd = plt.legend(loc="lower left", numpoints=1, fontsize=10)
+
+#change the marker size manually for both lines
+lgnd.legendHandles[0]._legmarker.set_markersize(6)
+lgnd.legendHandles[1]._legmarker.set_markersize(6)
+plt.show()
+
+# %%
 # ablation comparison results
 l2 = [
     ("ioi", 1, 1200),
@@ -183,13 +269,13 @@ for dataset, x_bound, y_bound in l2:
     ax = None
     # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
     folders=({
-            "Mean": (f"{root_folder}/mean/unif", "coral"), 
-            "Resample": (f"{root_folder}/resample/unif", "saddlebrown"), 
-            "Optimal": (f"{root_folder}/oa/unif", "red"), 
-            "CF": (f"{root_folder}/cf/unif", "maroon"), 
+            "Mean": (f"{root_folder}/mean/unif", "purple"), 
+            "Resample": (f"{root_folder}/resample/unif", "green"), 
+            "Optimal": (f"{root_folder}/oa/unif", "black"), 
+            "Counterfactual": (f"{root_folder}/cf/unif", "maroon"), 
         }, {}, x_bound, y_bound, f"{dataset}/comp/unif_")
-    for log in [False, True]:
-        plot_pareto(folders, log=log)
+    for log in [True]:
+        plot_pareto(folders, log=log, order=[2,0,1,3])
 
 # %%
 l3 = [
@@ -207,10 +293,10 @@ for dataset, ablation_type, x_bound, y_bound in l:
     ax = None
     # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
     other_folders = {
-            "Mean": (f"{root_folder}/mean/acdc", "coral"), 
-            "Resample": (f"{root_folder}/resample/acdc", "saddlebrown"), 
-            "Optimal": (f"{root_folder}/oa/acdc", "red"), 
-            "Counterfactual": (f"{root_folder}/cf/acdc", "maroon"), 
+            "Mean ablation": (f"{root_folder}/mean/acdc", "goldenrod"), 
+            "Resample ablation": (f"{root_folder}/resample/acdc", "royalblue"), 
+            "Optimal ablation": (f"{root_folder}/oa/acdc", "black"), 
+            "Counterfactual": (f"{root_folder}/cf/acdc", "purple"), 
         }
     my_type = ablation_lookup[ablation_type].capitalize()
     print(my_type)

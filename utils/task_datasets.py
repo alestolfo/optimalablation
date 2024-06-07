@@ -25,9 +25,11 @@ from utils.datasets.greater_than.utils import get_valid_years
 from utils.datasets.greater_than.data import YearDataset
 
 class TaskDataset():
-    def __init__(self, batch_size, device):
+    def __init__(self, ds_name, batch_size, device, counterfactual=False):
+        self.ds_name = ds_name
         self.batch_size = batch_size
         self.device = device
+        self.counterfactual = counterfactual
 
     def process_means(self, all_means, samples, cutoff=None):
         if cutoff:
@@ -50,13 +52,13 @@ class TaskDataset():
         else:
             cf_tag = ""
 
-        with open(f"results/oca/ioi/means_{cf_tag}attention.pkl", "rb") as f:
+        with open(f"results/oca/{self.ds_name}/means_{cf_tag}attention.pkl", "rb") as f:
             #  seq_len x n_layers x n_heads x d_head
             init_modes_attention = pickle.load(f)
-        with open(f"results/oca/ioi/means_{cf_tag}mlp.pkl", "rb") as f:
+        with open(f"results/oca/{self.ds_name}/means_{cf_tag}mlp.pkl", "rb") as f:
             # seq_len x n_layers x d_model
             init_modes_mlp = pickle.load(f)
-        with open(f"results/oca/ioi/means_{cf_tag}samples.pkl", "rb") as f:
+        with open(f"results/oca/{self.ds_name}/means_{cf_tag}samples.pkl", "rb") as f:
             # seq_len
             samples = pickle.load(f)
             
@@ -66,11 +68,10 @@ class TaskDataset():
         return None, None, None
 
     def retrieve_batch_cf(self, tokenizer, ablation_type, test=False):
-        cf = None
-        if ablation_type == "cf":
-            batch, last_token_pos, cf = self.next_batch(tokenizer, test=test, counterfactual=True)
-        else:
-            batch, last_token_pos = self.next_batch(tokenizer, test=test)
+        batch_data = self.next_batch(tokenizer, test=test)
+        batch = batch_data[0]
+        last_token_pos = batch_data[1]
+        cf = batch_data[2] if ablation_type == "cf" else None
 
         if ablation_type == "resample":
             permutation = gen_resample_perm(batch.shape[0]).to(self.device)
@@ -137,13 +138,24 @@ class OWTConfig():
 #         return batch, last_token_pos
 
 class IOIConfig(TaskDataset):
-    def __init__(self, batch_size, device, fix_prompt=False):
-        super().__init__(batch_size, device)
+    def __init__(self, batch_size, device, counterfactual=False, fix_prompt=False):
+        super().__init__("ioi", batch_size, device, counterfactual)
 
         self.seed = 0
         self.fix_prompt = fix_prompt
-        
-    def next_batch(self, tokenizer, test=False, counterfactual=False):
+        self.ds = None
+
+    def gen_ds(self):
+        cf = (
+            ioi_dataset
+            .gen_flipped_prompts(("IO", "RAND"), seed=1)
+            .gen_flipped_prompts(("S", "RAND"), seed=2)
+            .gen_flipped_prompts(("S1", "RAND"), seed=3)
+        ).toks
+        cf = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(cf.shape[0],1),cf], dim=1).to(self.device)
+
+
+    def next_batch(self, tokenizer, test=False):
         ioi_dataset = IOIDataset(
             prompt_type="ABBA",
             N=self.batch_size,
@@ -162,20 +174,13 @@ class IOIConfig(TaskDataset):
         last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(self.device)).argmax(dim=-1) - 1
 
         if counterfactual:
-            cf = (
-                ioi_dataset
-                .gen_flipped_prompts(("IO", "RAND"), seed=1)
-                .gen_flipped_prompts(("S", "RAND"), seed=2)
-                .gen_flipped_prompts(("S1", "RAND"), seed=3)
-            ).toks
-            cf = torch.cat([torch.tensor([tokenizer.bos_token_id]).repeat(cf.shape[0],1),cf], dim=1).to(self.device)
             return batch, last_token_pos, cf
         else:
             return batch, last_token_pos
 
 class GTConfig(TaskDataset):
-    def __init__(self, batch_size, device):
-        super().__init__(batch_size, device)
+    def __init__(self, batch_size, device, counterfactual=False):
+        super().__init__("gt", batch_size, device, counterfactual)
 
         self.years_to_sample_from = None
 

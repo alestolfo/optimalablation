@@ -23,7 +23,7 @@ sns.set()
 
 # model_name = argv[1]
 # dir_mode = argv[2]
-model_name = "gpt2-xl"
+model_name = "gpt2-large"
 dir_mode = "vanilla"
 
 folders = {

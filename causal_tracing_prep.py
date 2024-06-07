@@ -83,7 +83,7 @@ with open(f"{ds_path}/known_1000.json", 'rb') as f:
 # filter for correct prompts
 
 sns.set()
-mode = "attribute"
+mode = "fact"
 folder="results/causal_tracing"
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"
@@ -117,7 +117,7 @@ answer_candidates = 3
 kl_loss = torch.nn.KLDivLoss(reduction="none")
 # %%
 
-out_file = "my_attributes" if mode == "attribute" else "my_facts"
+out_file = "my_attributes" if mode == "attribute" else "my_known"
 ans_key = "object" if mode == "attribute" else "attribute"
 
 correct = 0
@@ -155,78 +155,42 @@ with open(f"{ds_path}/{out_file}.pkl", "wb") as f:
 
 # %%
 
-with open(f"{ds_path}/{out_file}.pkl", "wb") as f:
-    pickle.dump(my_dataset, f)
+# combine facts and attributes ds
+# with open("utils/datasets/facts/my_attributes.pkl", "rb") as f:
+#     attributes_ds = pickle.load(f)
 
+# correct_prompts = []
+# subject_object_pairs = set()
+# rel_names = {}
+# for a_line in attributes_ds:
+#     a_line["attribute"] = a_line["object"]
+#     del a_line["object"]
+#     if (a_line["subject"], a_line["attribute"]) in subject_object_pairs:
+#         # print("dupe")
+#         continue
+#     if a_line['relation_name'] not in rel_names:
+#         rel_names[a_line['relation_name']] = 1
+#     else:
+#         rel_names[a_line['relation_name']] += 1
+#     # if rel_names[a_line['relation_name']] >= 200:
+#     #     continue
+#     subject_object_pairs.add((a_line["subject"], a_line["attribute"]))
+#     correct_prompts.append({"info": a_line["relation_name"], "subject": a_line["subject"], "object": a_line["attribute"], "prompt": a_line["prompt"].replace("{}", a_line["subject"])})
 
-
-
-
-
-# %%
-
-
-# correct_count = 0
-# with torch.no_grad():
-#     correct_prompts = []
-#     for batch in tqdm(data_iter):
-
-#         prompts = batch['prompt']
-            
-#         prompts = []
-#         for i, temp in enumerate(batch['template']):
-#             prompts.append(temp.replace("{}", batch['subject'][i]))
-        
-#         input = tokenizer(prompts, padding=True, return_tensors='pt')
-#         input = input['input_ids'].to(device)
-
-#         prediction = model.generate(input, temperature=0, max_new_tokens=5)
-#         answers = tokenizer.batch_decode(prediction[:, input.shape[-1]:])
-
-#         for i, answer in enumerate(answers):
-#             print(prompts[i], "|", answer, "|", batch['object'][i])
-#             correct = answer.strip().startswith(batch['object'][i]) or batch['object'][i].startswith(answer.strip())
-#             if correct:
-#                 correct_count += 1
-
-            # if (top_probs[i, top_x] > rejection_prob and (
-            #     answer.strip().startswith(batch['object'][i]) 
-            #     or batch['object'][i].startswith(answer.strip())
-            # )):
-            #     correct_prompts.append({"rel": batch['relation_name'][i], "template": batch['template'][i], "subject": batch['subject'][i], "object": batch['object'][i]})
-
-
-        # output_probs = model(input['input_ids'])[:,-1,:].softmax(dim=-1)
-
-        # top_probs, top_idx = output_probs.topk(answer_candidates, dim=-1)
-        # for top_x in range(answer_candidates):
-        #     print(top_x)
-        #     self_prompt = torch.cat((input, top_idx[:, [top_x]]), dim=-1)
-        #     prediction = model.generate(self_prompt, temperature=0, max_new_tokens=5)
-        #     answers = tokenizer.batch_decode(prediction[:, input.shape[-1]:])
-
-        #     for i, answer in enumerate(answers):
-        #         print(prompts[i], "|", answer, "|", batch['object'][i])
-        #         if (top_probs[i, top_x] > rejection_prob and (
-        #             answer.strip().startswith(batch['object'][i]) 
-        #             or batch['object'][i].startswith(answer.strip())
-        #         )):
-        #             correct_prompts.append({"rel": batch['relation_name'][i], "template": batch['template'][i], "subject": batch['subject'][i], "object": batch['object'][i]})
-
-# %%
-
-# another way to do this: tokenize the answer and then pick those with high enough prediction prob
-
-# another way to do this: check which tokens are compatible with the answer
-# 
-
-# with torch.no_grad():
-#     bos_output = model(input['input_ids'], padding_side="left")[:,-1].softmax(dim=-1)
-#     n_bos_output = model(input['input_ids'])[:,-1].softmax(dim=-1)
 # # %%
-# out_file = f"utils/datasets/facts/correct_facts_{model_name}.pkl"
-# if not os.path.exists(out_file):
-#     with open(out_file, 'wb') as f:
-#         pickle.dump(correct_prompts, f)
+# with open(f"{ds_path}/my_known.pkl", "rb") as f:
+#     facts_ds = pickle.load(f)
 
-# %%
+# # %%
+# for a_line in facts_ds:
+#     if (a_line["subject"], a_line["attribute"]) in subject_object_pairs:
+#         print("dupe")
+#         print(a_line["subject"], a_line["attribute"])
+#         continue
+#     subject_object_pairs.add((a_line["subject"], a_line["attribute"]))
+#     correct_prompts.append({"info": a_line["relation_id"], "subject": a_line["subject"], "object": a_line["attribute"], "prompt": a_line["prompt"]})
+
+
+# # %%
+# with open("utils/datasets/facts/my_facts.pkl", "wb") as f:
+#     pickle.dump(correct_prompts, f)

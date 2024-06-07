@@ -57,7 +57,7 @@ model.train()
 
 # %%
 # task_ds = OWTConfig(owt_iter, device)
-task_ds = get_task_ds(dataset, batch_size, device)
+task_ds = get_task_ds(dataset, batch_size, device, counterfactual)
 # task_ds = GTConfig(batch_size, device)
 
 # %%
@@ -197,11 +197,9 @@ for name, hook in fwd_hooks:
 
 for i in tqdm(range(1000)):
     # modify depending on the dataset
-    if counterfactual:
-        _, last_token_pos, cf = task_ds.next_batch(tokenizer, counterfactual=True)
-        batch = cf
-    else:
-        batch, last_token_pos = task_ds.next_batch(tokenizer)
+    batch_data = task_ds.next_batch(tokenizer)
+    last_token_pos = batch_data[1]
+    batch = batch_data[2 if counterfactual else 0]
     
     if means_only:
         activation_storage.clear()

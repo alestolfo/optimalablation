@@ -27,18 +27,21 @@ from utils.circuit_utils import edges_to_mask, mask_to_nodes, prune_dangling_edg
 # %%
 sns.set()
 
-
 folder="results/ablation_loss"
+plot_folder="plots_export/ablation_loss"
 dataset_list = {"gt": "Greater-Than", "ioi": "IOI"}
 ablation_types = ["zero", "mean", "resample", "refmean", "oca", "cf"]
 ax_labels = {
     "zero": "Zero",
     "mean": "Mean", 
     "resample": "Resample",
-    "refmean": "Reference mean",
+    "refmean": "CF-Mean",
     "oca": "Optimal",
-    "cf": "Counterfactual"
+    "cf": "CF"
 }
+
+if not os.path.exists(plot_folder):
+    os.makedirs(plot_folder)
 
 ablation_data = {}
 for ds in dataset_list:
@@ -48,10 +51,10 @@ for ds in dataset_list:
 
 # %%
 
-CORR_SIZE = 24
+CORR_SIZE = 32
 SMALL_SIZE = 12
-MEDIUM_SIZE = 20
-BIGGER_SIZE = 24
+MEDIUM_SIZE = 32
+BIGGER_SIZE = 48
 
 plt.rc('font', size=CORR_SIZE)          # controls default text sizes
 plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
@@ -74,20 +77,33 @@ for ds in dataset_list:
             plot_no_outliers(sns.scatterplot, .03, 
                             ablation_data[ds][x]['head_losses'].log(), 
                             ablation_data[ds][y]['head_losses'].log(),
-                            axes[i,j], xy_line=True, args={"x": ax_labels[x], "y": ax_labels[y], "s": 10, "corr": True})
+                            axes[i,j], xy_line=True, args={"x": ax_labels[x], "y": ax_labels[y], "s": 20, "corr": True})
             plot_no_outliers(sns.scatterplot, 0, 
                              # ranks
                             (ablation_data[ds][x]['head_losses'] > ablation_data[ds][x]['head_losses'].squeeze(-1)).sum(dim=-1), 
                             (ablation_data[ds][y]['head_losses'] > ablation_data[ds][y]['head_losses'].squeeze(-1)).sum(dim=-1),
-                            axes[j,i], xy_line=True, args={"x": ax_labels[x], "y": ax_labels[y], "s": 10, "corr": True})
-    plt.suptitle(f"Correlation plots of ablation loss measurements on {dataset_list[ds]}", fontsize=24)
+                            axes[j,i], xy_line=True, args={"x": ax_labels[x], "y": ax_labels[y], "s": 20, "corr": True})
+    plt.suptitle(f"Correlation plots of ablation loss measurements on {dataset_list[ds]}")
     plt.tight_layout()
     plt.subplots_adjust(top=.96)
-    plt.savefig(f"{folder}/{ds}.png")
+    plt.savefig(f"{plot_folder}/{ds}.png")
     plt.show()
 
 
 # %%
+
+CORR_SIZE = 12
+SMALL_SIZE = 12
+MEDIUM_SIZE = 14
+BIGGER_SIZE = 18
+
+plt.rc('font', size=CORR_SIZE)          # controls default text sizes
+plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
+plt.rc('axes', labelsize=MEDIUM_SIZE)    # fontsize of the x and y labels
+plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
+plt.rc('legend', fontsize=SMALL_SIZE)    # legend fontsize
+plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
 n_layers = 12
 n_heads = 12
@@ -194,64 +210,64 @@ for ds in dataset_list:
     plt.ylabel("True positives")
     # plt.xscale("log")
     # plt.xlim(0.01, 31526)
-    plt.title(f"Edge ROC curves on {dataset_list[ds]}")
-    plt.savefig(f"{folder}/{ds}_roc_nodes.png")
+    plt.suptitle(f"Edge ROC curves on {dataset_list[ds]}")
+    plt.savefig(f"{plot_folder}/{ds}_roc_nodes.png")
     plt.show()
 
 
 # %%
 
-# Degree-weighted edges
-n_layers = 12
-n_heads = 12
-edges_per_node = {'attn': 146, 'mlp': 157}
+# # Degree-weighted edges
+# n_layers = 12
+# n_heads = 12
+# edges_per_node = {'attn': 146, 'mlp': 157}
 
-for ds in dataset_list:
-    edge_list = torch.load(f"results/pruning/{ds}/oa/acdc/edges_manual.pth")
-    edge_mask = edges_to_mask(edge_list)
-    _, _, _, attn_nodes, mlp_nodes = prune_dangling_edges(edge_mask)
-    node_list = {'attn': attn_nodes.squeeze(0).nonzero().tolist(), 'mlp': mlp_nodes.nonzero().flatten().tolist()}
+# for ds in dataset_list:
+#     edge_list = torch.load(f"results/pruning/{ds}/oa/acdc/edges_manual.pth")
+#     edge_mask = edges_to_mask(edge_list)
+#     _, _, _, attn_nodes, mlp_nodes = prune_dangling_edges(edge_mask)
+#     node_list = {'attn': attn_nodes.squeeze(0).nonzero().tolist(), 'mlp': mlp_nodes.nonzero().flatten().tolist()}
 
-    idx_dict = {}
+#     idx_dict = {}
  
     
-    for layer_no, head_no in node_list['attn']:
-        idx_dict[layer_no * n_heads + head_no] = (attn_nodes[0, layer_no, head_no].item(), edges_per_node['attn'])
+#     for layer_no, head_no in node_list['attn']:
+#         idx_dict[layer_no * n_heads + head_no] = (attn_nodes[0, layer_no, head_no].item(), edges_per_node['attn'])
     
-    for mlp_no in node_list['mlp']:
-        idx_dict[n_layers * n_heads + mlp_no] = (mlp_nodes[0, mlp_no].item(), edges_per_node['mlp'])
+#     for mlp_no in node_list['mlp']:
+#         idx_dict[n_layers * n_heads + mlp_no] = (mlp_nodes[0, mlp_no].item(), edges_per_node['mlp'])
         
-    for ablation_type in ablation_types:
-        true_positives = [0]
-        false_positives = [0]
-        roc = 0
+#     for ablation_type in ablation_types:
+#         true_positives = [0]
+#         false_positives = [0]
+#         roc = 0
 
-        for node_idx in ablation_data[ds][ablation_type]['head_losses'].argsort(dim=0, descending=True).flatten().tolist():
-            # if node_idx >= n_layers * n_heads:
-            #     continue            
+#         for node_idx in ablation_data[ds][ablation_type]['head_losses'].argsort(dim=0, descending=True).flatten().tolist():
+#             # if node_idx >= n_layers * n_heads:
+#             #     continue            
 
-            if node_idx in idx_dict:
-                true_positives.append(true_positives[-1] + 1)
-                false_positives.append(false_positives[-1])
+#             if node_idx in idx_dict:
+#                 true_positives.append(true_positives[-1] + 1)
+#                 false_positives.append(false_positives[-1])
 
-                # true_positives.append(true_positives[-1] + idx_dict[node_idx][0])
-                # false_positives.append(false_positives[-1])
+#                 # true_positives.append(true_positives[-1] + idx_dict[node_idx][0])
+#                 # false_positives.append(false_positives[-1])
                 
-                # true_positives.append(true_positives[-1])
-                # false_positives.append(false_positives[-1] + idx_dict[node_idx][1] - idx_dict[node_idx][0])
-            else:
-                # true_positives.append(true_positives[-1])
-                # false_positives.append(false_positives[-1] + edges_per_node['attn'] if node_idx < n_layers * n_heads else edges_per_node['mlp'])
-                true_positives.append(true_positives[-1])
-                false_positives.append(false_positives[-1] + 1)
+#                 # true_positives.append(true_positives[-1])
+#                 # false_positives.append(false_positives[-1] + idx_dict[node_idx][1] - idx_dict[node_idx][0])
+#             else:
+#                 # true_positives.append(true_positives[-1])
+#                 # false_positives.append(false_positives[-1] + edges_per_node['attn'] if node_idx < n_layers * n_heads else edges_per_node['mlp'])
+#                 true_positives.append(true_positives[-1])
+#                 false_positives.append(false_positives[-1] + 1)
 
-            roc += (true_positives[-1] + true_positives[-2]) * (false_positives[-1] - false_positives[-2]) / 2
+#             roc += (true_positives[-1] + true_positives[-2]) * (false_positives[-1] - false_positives[-2]) / 2
         
-        roc = round(roc / (true_positives[-1] * false_positives[-1]), 3)
-        print(f"Ablation type {ablation_type} roc {roc}")
+#         roc = round(roc / (true_positives[-1] * false_positives[-1]), 3)
+#         print(f"Ablation type {ablation_type} roc {roc}")
         
-        sns.lineplot(x=false_positives, y=true_positives, label=ablation_type, estimator=None)
-    plt.savefig(f"{folder}/{ds}_roc_nodes.png")
-    plt.show()
+#         sns.lineplot(x=false_positives, y=true_positives, label=ablation_type, estimator=None)
+#     plt.savefig(f"{folder}/{ds}_roc_nodes.png")
+#     plt.show()
 
 # %%
