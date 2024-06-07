@@ -101,6 +101,11 @@ plt.rc('legend', fontsize=SMALL_SIZE)    # legend fontsize
 plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
 # %%
+
+all_probs = []
+desc = []
+
+# %%
 for window_size, token_type in settings_list:
     f, axes = plt.subplots(1,2, figsize=(20,5))
     for i,node_type in enumerate(node_types):
@@ -121,6 +126,9 @@ for window_size, token_type in settings_list:
             aie = (aie - baseline) / (agg_clean_mean - baseline)
             
             aie_means = aie.mean(dim=[0,1,2]).cpu().numpy()
+
+            all_probs.append(aie_means)
+            desc.append((token_type, window_size, node_type, ablate_type))
 
             plt.sca(axes[i])
             bar_cont = plt.bar((np.arange(aie_means.shape[0]) * 3 + (1 if ablate_type=="oa" else 0)) / 3, aie_means, 1 / 3, label=labels[ablate_type], color=colors[ablate_type])
@@ -151,6 +159,8 @@ for window_size, token_type in settings_list:
     plt.savefig(f"{plot_folder}/{token_type}_{window_size}.png")
     plt.show()
 # %%
+
+
 
 # sns.scatterplot(x=corrupted_probs.flatten().cpu(), y=clean_probs.flatten().cpu(), s=5)
 # # %%

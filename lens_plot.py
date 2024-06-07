@@ -160,9 +160,9 @@ for model_name in all_models:
         sns.lineplot(list(vanilla_losses[f"{k}"]), color=get_shades(k)[0], label=f"{ax_labels[k]}", linewidth=lw[i])
         # plt.show()
         plt.ylim(-0.2,5.3)
-        plt.xlabel("Layer number", fontsize=16)
-        plt.ylabel("KL-divergence", fontsize=16)
-        plt.title(f"Lens losses on {mn}", fontsize=20)
+        plt.xlabel("Layer number")
+        plt.ylabel("KL-divergence")
+        plt.suptitle(f"Lens losses on {mn}")
         plt.tight_layout()
         plt.savefig(f"{plot_folder}/overall-{mn}.png")
     continue

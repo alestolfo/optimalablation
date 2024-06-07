@@ -208,10 +208,10 @@ for ds in dataset_list:
         #     break
     plt.xlabel("False positives")
     plt.ylabel("True positives")
-    # plt.xscale("log")
+    plt.xscale("log")
     # plt.xlim(0.01, 31526)
     plt.suptitle(f"Edge ROC curves on {dataset_list[ds]}")
-    plt.savefig(f"{plot_folder}/{ds}_roc_nodes.png")
+    plt.savefig(f"{plot_folder}/{ds}_roc_nodes_log.png")
     plt.show()
 
 

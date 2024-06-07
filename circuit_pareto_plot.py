@@ -224,7 +224,7 @@ l = [
     ("gt", "resample", 0.2, 800)
 ]
 for dataset, ablation_type, x_bound, y_bound in l:
-    root_folder = f"results/pruning/{dataset}/{ablation_type}"
+    root_folder = f"pt/pruning/{dataset}/{ablation_type}"
     ax = None
     # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
     folders=({
@@ -247,7 +247,7 @@ l2 = [
 ]
 # comparison across ablation types
 for dataset, x_bound, y_bound in l2:
-    root_folder = f"results/pruning/{dataset}"
+    root_folder = f"pt/pruning/{dataset}"
     ax = None
     # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
     folders=({
