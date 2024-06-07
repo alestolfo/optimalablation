@@ -12,6 +12,7 @@ import numpy as np
 import matplotlib.ticker as ticker
 
 
+
 sns.set(rc={"xtick.bottom" : True, "ytick.left" : True})
 # plt.rcParams.update({"xtick.bottom" : True, "ytick.left" : True})
 
@@ -44,8 +45,11 @@ plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
 plt.rc('legend', fontsize=CORR_SIZE)    # legend fontsize
 plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
+plot_folder="plots_export/pareto"
 task_lookup = {"ioi": "IOI", "gt": "Greater-Than"}
 ablation_lookup = {"mean": "mean", "cf": "counterfactual", "resample": "resample", "oa": "optimal"}
+
+# %%
 
 def plot_points(k, x, color=None, suffix=""):
     print(x)
@@ -205,7 +209,7 @@ def plot_pareto(pms, log=False, suffix="", order=None):
     plt.suptitle(f"{task_lookup[t]} circuits, {abl_type}")
     plt.tight_layout()
 
-    plt.savefig(f"results/pareto/{task_name}_pt_{'log' if log else 'c'}{suffix}.png")
+    plt.savefig(f"{plot_folder}/{task_name}_pt_{'log' if log else 'c'}{suffix}.png")
     plt.show()
 
 # %%
@@ -234,28 +238,6 @@ for dataset, ablation_type, x_bound, y_bound in l:
         }, x_bound, y_bound, f"{dataset}/{ablation_type}")
     for log in [True]:
         plot_pareto(folders, log=log, order=[0,1,4,3,2])
-# %%
-
-import matplotlib.pyplot as plt
-import numpy as np
-
-def rand_data():
-    return np.random.uniform(low=0., high=1., size=(100,))
-
-# Generate data.
-x1, y1 = [rand_data() for i in range(2)]
-x2, y2 = [rand_data() for i in range(2)]
-
-plt.figure()
-plt.plot(x1, y1, 'o', label='first', markersize=np.sqrt(20.), c='b')
-plt.plot(x2, y2, 'o', label='second', markersize=np.sqrt(35.), c='r')
-# Plot legend.
-lgnd = plt.legend(loc="lower left", numpoints=1, fontsize=10)
-
-#change the marker size manually for both lines
-lgnd.legendHandles[0]._legmarker.set_markersize(6)
-lgnd.legendHandles[1]._legmarker.set_markersize(6)
-plt.show()
 
 # %%
 # ablation comparison results
