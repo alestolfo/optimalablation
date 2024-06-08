@@ -81,7 +81,7 @@ if ablation_type == "cf":
 elif ablation_type == "resample":
     pruning_cfg.lr /= 2
 
-task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device)
+task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device, ablation_type)
 
 for param in model.parameters():
     param.requires_grad = False
@@ -128,7 +128,7 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
     plotting = no_batches % (-1 * pruning_cfg.record_every) == -1
     checkpointing = no_batches % (-1 * pruning_cfg.checkpoint_every * pruning_cfg.record_every) == -1
 
-    batch, last_token_pos, cf = task_ds.retrieve_batch_cf(tokenizer, ablation_type)
+    batch, last_token_pos, cf = task_ds.retrieve_batch_cf(tokenizer)
 
     sampling_optimizer.zero_grad()
     if ablation_type == "oa":

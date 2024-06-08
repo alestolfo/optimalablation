@@ -1,28 +1,12 @@
 # %%
 import torch
-import datasets
-from torch.utils.data import DataLoader
-from transformer_lens import HookedTransformer
 import numpy as np 
-from tqdm import tqdm
-from fancy_einsum import einsum
-from einops import rearrange
 import math
-from functools import partial
-import torch.optim
-import time
-from itertools import cycle
 import os
 import seaborn as sns
-import argparse
 import matplotlib.pyplot as plt
 import pickle
-from utils.training_utils import load_model_data, load_args, update_means_variances, update_means_variances_mixed, update_means_variances_exponential, plot_no_outliers
-from utils.MaskConfig import VertexInferenceConfig
-from utils.task_datasets import get_task_ds
-from pruners.VertexPruner import VertexPruner
-from mask_samplers.AblationMaskSampler import SingleComponentMaskSampler
-from utils.circuit_utils import edges_to_mask, mask_to_nodes, prune_dangling_edges
+from utils.training_utils import plot_no_outliers
 
 # %%
 sns.set()

@@ -11,8 +11,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.ticker as ticker
 
-
-
 sns.set(rc={"xtick.bottom" : True, "ytick.left" : True})
 # plt.rcParams.update({"xtick.bottom" : True, "ytick.left" : True})
 

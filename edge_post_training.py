@@ -38,7 +38,7 @@ batch_size = 75
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
 pruning_cfg.n_samples = 1
 
-task_ds = get_task_ds(dataset, batch_size, device)
+task_ds = get_task_ds(dataset, batch_size, device, ablation_type)
 
 for param in model.parameters():
     param.requires_grad = False
@@ -79,7 +79,7 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     modal_optimizer.zero_grad()
 
-    batch, last_token_pos = task_ds.next_batch(tokenizer)
+    batch, last_token_pos = task_ds.retrieve_batch_cf(tokenizer)
     loss = edge_pruner(batch, last_token_pos, timing=False)
     loss.backward()
     modal_optimizer.step()

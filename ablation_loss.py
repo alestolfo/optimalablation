@@ -1,8 +1,5 @@
 # %%
 import torch
-import datasets
-from torch.utils.data import DataLoader
-from transformer_lens import HookedTransformer
 import numpy as np 
 from tqdm import tqdm
 from fancy_einsum import einsum
@@ -17,7 +14,7 @@ import seaborn as sns
 import argparse
 import matplotlib.pyplot as plt
 import pickle
-from utils.training_utils import load_model_data, load_args, update_means_variances, update_means_variances_mixed, update_means_variances_exponential, plot_no_outliers
+from utils.training_utils import load_model_data, load_args, update_means_variances, plot_no_outliers
 from utils.MaskConfig import VertexInferenceConfig
 from utils.task_datasets import get_task_ds
 from pruners.VertexPruner import VertexPruner
@@ -45,7 +42,7 @@ pruning_cfg.batch_size = 3 if oca_train else 20
 
 # fix_prompt: only resample from the same prompt
 # task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device, fix_prompt=(ablation_type == "resample"))
-task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device)
+task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device, ablation_type)
 
 for param in model.parameters():
     param.requires_grad = False
@@ -99,7 +96,7 @@ def save_snapshot(head_losses, head_vars):
 
 # %%
 for no_batches in tqdm(range(max_batches)):
-    batch, last_token_pos, cf = task_ds.retrieve_batch_cf(tokenizer, ablation_type)
+    batch, last_token_pos, cf = task_ds.retrieve_batch_cf(tokenizer)
 
     if oca_train:
         modal_optimizer.zero_grad()

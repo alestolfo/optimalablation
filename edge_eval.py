@@ -66,7 +66,7 @@ batch_size=50
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folders[0], batch_size=batch_size)
 pruning_cfg.n_samples = 1
 
-task_ds = get_task_ds(dataset, batch_size, device)
+task_ds = get_task_ds(dataset, batch_size, device, ablation_type)
 
 for param in model.parameters():
     param.requires_grad = False
@@ -78,6 +78,6 @@ edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
 # %%
-next_batch = partial(task_ds.retrieve_batch_cf, tokenizer, ablation_type, test=True)
+next_batch = partial(task_ds.retrieve_batch_cf, tokenizer)
 pruning_cfg.record_post_training(folders, edge_pruner, next_batch, ablation_type, load_edges=load_edges, re_eval=re_eval, transfer=(transfer_folder != ablation_type))
 # %%

@@ -58,7 +58,7 @@ batch_size = 75
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folder, batch_size=batch_size)
 pruning_cfg.n_samples = 1
 
-task_ds = get_task_ds(dataset, batch_size, device)
+task_ds = get_task_ds(dataset, batch_size, device, ablation_type)
 
 for param in model.parameters():
     param.requires_grad = False
@@ -108,7 +108,7 @@ edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
 # %%
-next_batch = partial(task_ds.retrieve_batch_cf, tokenizer, ablation_type)
+next_batch = partial(task_ds.retrieve_batch_cf, tokenizer)
 
 all_losses = []
 all_edge_counts = []
@@ -136,7 +136,7 @@ for i, (circuit, edge_count) in enumerate(circuits):
     no_test_batches = 20
     test_loss = []
     for no_batches in tqdm(range(no_test_batches)):
-        batch, last_token_pos, cf = next_batch(test=True)
+        batch, last_token_pos, cf = next_batch()
         with torch.no_grad():
             loss = edge_pruner(batch, last_token_pos, cf, timing=False)
             test_loss.append(loss.item())
@@ -146,12 +146,3 @@ for i, (circuit, edge_count) in enumerate(circuits):
 
     if i % -10 == -1:
         torch.save({"loss": all_losses, "edges": all_edge_counts}, f"{folder}/log_{uid}.pth")
-
-# %%
-
-        # pruner_dict = component_pruner.state_dict()
-        # pruner_dict = {k: pruner_dict[k] for k in pruner_dict if not k.startswith("base_model")}
-        # snapshot_dict['pruner_dict'] = pruner_dict
-        # if modal_optimizer is not None:
-        #     snapshot_dict['modal_optim_dict'] = modal_optimizer.state_dict()
-        # torch.save(snapshot_dict, snapshot_path)
