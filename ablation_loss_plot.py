@@ -14,13 +14,13 @@ sns.set()
 folder="results/ablation_loss"
 plot_folder="plots_export/ablation_loss"
 dataset_list = {"gt": "Greater-Than", "ioi": "IOI"}
-ablation_types = ["zero", "mean", "resample", "refmean", "oca", "cf"]
+ablation_types = ["zero", "mean", "resample", "cf_mean", "oa", "cf"]
 ax_labels = {
     "zero": "Zero",
     "mean": "Mean", 
     "resample": "Resample",
-    "refmean": "CF-Mean",
-    "oca": "Optimal",
+    "cf_mean": "CF-Mean",
+    "oa": "Optimal",
     "cf": "CF"
 }
 

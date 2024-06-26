@@ -96,6 +96,9 @@ def plot_pareto(pms, log=False, suffix="", order=None):
 
     fig = plt.figure(figsize=(8,8))
     for k, (x, color) in folder.items():
+        if not os.path.exists(x):
+            continue
+
         ax = None
         print(x)
         for path in glob.glob(f"{x}/report/*"):
@@ -199,10 +202,11 @@ def plot_pareto(pms, log=False, suffix="", order=None):
         abl_type = f"ablation comparison"
     if order:
         handles, labels = plt.gca().get_legend_handles_labels()
-        if labels[2] == "manual":
-            h2 = plt.Line2D([0], [0], marker='x', markersize=8, mew=4, color='red', linestyle='None')
-            handles[2] = h2
-        legend = plt.legend([handles[idx] for idx in order],[labels[idx] for idx in order])
+        if len(labels) >= 3:
+            if labels[2] == "manual":
+                h2 = plt.Line2D([0], [0], marker='x', markersize=8, mew=4, color='red', linestyle='None')
+                handles[2] = h2
+            legend = plt.legend([handles[idx] for idx in order],[labels[idx] for idx in order])
 
     plt.suptitle(f"{task_lookup[t]} circuits, {abl_type}")
     plt.tight_layout()
@@ -216,13 +220,17 @@ l = [
     ("ioi", "oa", 0.14, 1200),
     ("ioi", "mean", 1, 1200),
     ("ioi", "resample", 5, 1200),
+    # ("ioi", "mean_agnostic", 1, 1200),
+    # ("ioi", "resample_agnostic", 5, 1200),
     ("gt", "cf", 0.2, 800),
     ("gt", "oa", 0.04, 800), # need to deal with this
     ("gt", "mean", 0.4, 800),
-    ("gt", "resample", 0.2, 800)
+    ("gt", "resample", 0.2, 800),
+    # ("gt", "mean_agnostic", 0.2, 800),
+    # ("gt", "resample_agnostic", 0.2, 800)
 ]
 for dataset, ablation_type, x_bound, y_bound in l:
-    root_folder = f"pt/pruning/{dataset}/{ablation_type}"
+    root_folder = f"results/pruning/{dataset}/{ablation_type}"
     ax = None
     # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
     folders=({
@@ -245,12 +253,14 @@ l2 = [
 ]
 # comparison across ablation types
 for dataset, x_bound, y_bound in l2:
-    root_folder = f"pt/pruning/{dataset}"
+    root_folder = f"results/pruning/{dataset}"
     ax = None
     # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
     folders=({
             "Mean": (f"{root_folder}/mean/unif", "purple"), 
             "Resample": (f"{root_folder}/resample/unif", "green"), 
+            "Mean-agnostic": (f"{root_folder}/mean_agnostic/unif", "purple"), 
+            "Resample-agnostic": (f"{root_folder}/resample_agnostic/unif", "green"), 
             "Optimal": (f"{root_folder}/oa/unif", "black"), 
             "Counterfactual": (f"{root_folder}/cf/unif", "maroon"), 
         }, {}, x_bound, y_bound, f"{dataset}/comp/unif_")

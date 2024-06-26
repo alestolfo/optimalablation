@@ -98,8 +98,10 @@ def load_args(run_type, default_lamb=None, defaults={}):
 def load_model_data(model_name, batch_size=8, ctx_length=25, repeats=True, ds_name=False, device="cuda:0"):
     # device="cpu"
     device = torch.device(device if torch.cuda.is_available() else "cpu")
+    print("Loading model...")
     model = HookedTransformer.from_pretrained(model_name, device=device)
     tokenizer = model.tokenizer
+    print("Loading OWT...")
     try:
         if ds_name:
             owt_loader = retrieve_owt_data(batch_size, ctx_length, tokenizer, ds_name=ds_name)

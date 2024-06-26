@@ -50,11 +50,14 @@ print("Lamb", reg_lamb)
 print("Dataset", dataset)
 print("Ablation type", ablation_type)
 
+cf_mode = ablation_type in {"resample", "cf"}
+
 # node_reg has same units as reg_lamb
 # at peak, node_reg adds 50% more regularization to each edge
 node_reg = min(0.5 * reg_lamb, 2e-4)
 
 gpu_requeue = True
+# reset_optim = 1000
 
 pretrained_folder = None
 
@@ -80,10 +83,52 @@ for param in model.parameters():
     param.requires_grad = False
 
 # %%
+if run_name == "vertex_prior":
+    prior_folder = f"results/pruning_vertices_auto/{dataset}/{prior_lamb}"
+    vertex_prune_mask, state_dict = retrieve_mask(prior_folder, state_dict=True)
+    all_alphas = torch.cat([ts.flatten() for k in vertex_prune_mask for ts in vertex_prune_mask[k]], dim=0)
+    sns.histplot(all_alphas.cpu())
+
+    vertex_prune_mask['mlp'].insert(0, torch.tensor([0]).to(device))
+    vertex_prune_mask['mlp'].append(torch.tensor([0]).to(device))
+
+    for i, ts in enumerate(edge_prune_mask['attn-attn']):
+        if i == 0:
+            continue
+        src_contrib = torch.stack(vertex_prune_mask['attn'][:i],dim=1).squeeze(0)
+        dest_contrib = vertex_prune_mask['attn'][i].unsqueeze(-1).unsqueeze(-1)
+        ts *= 0 
+        ts += init_param + prior_scale * (src_contrib + dest_contrib)
+
+    for i, ts in enumerate(edge_prune_mask['mlp-attn']):
+        src_contrib = torch.stack(vertex_prune_mask['mlp'][:i+1],dim=1).squeeze(0)
+        dest_contrib = vertex_prune_mask['attn'][i].unsqueeze(-1)
+        ts *= 0 
+        ts += init_param + prior_scale * (src_contrib + dest_contrib)
+
+    for i, ts in enumerate(edge_prune_mask['attn-mlp']):
+        src_contrib = torch.stack(vertex_prune_mask['attn'][:i+1],dim=1).squeeze(0)
+        dest_contrib = vertex_prune_mask['mlp'][i+1].unsqueeze(-1).unsqueeze(-1)
+        ts *= 0 
+        ts += init_param + prior_scale * (src_contrib + dest_contrib)
+
+    for i, ts in enumerate(edge_prune_mask['mlp-mlp']):
+        src_contrib = torch.stack(vertex_prune_mask['mlp'][:i+1],dim=1).squeeze(0)
+        dest_contrib = vertex_prune_mask['mlp'][i+1].unsqueeze(-1)
+        ts *= 0 
+        ts += init_param + prior_scale * (src_contrib + dest_contrib)
+
+    pruning_cfg.constant_prune_mask = edge_prune_mask
+    pruning_cfg.initialize_params(1, use_temp=True)
+
+# %%
 mask_sampler = EdgeMaskJointSampler(pruning_cfg, node_reg=node_reg)
-edge_pruner = EdgePruner(model, pruning_cfg, mask_sampler, **task_ds.get_pruner_args())
+edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, counterfactual_mode=cf_mode)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
+
+if run_name == "vertex_prior":
+    edge_pruner.load_state_dict(state_dict, strict=False)
 
 sampling_optimizer = torch.optim.AdamW(mask_sampler.parameters(), lr=pruning_cfg.lr, weight_decay=0)
 
@@ -100,6 +145,10 @@ lp_count = pruning_cfg.load_snapshot(edge_pruner, sampling_optimizer, modal_opti
 
 take_snapshot = partial(pruning_cfg.take_snapshot, edge_pruner, lp_count, sampling_optimizer, modal_optimizer)
 
+# if prune_retrain and edge_pruner.log.t == 0:
+#     edge_pruner.log.mode = "prune"
+#     edge_pruner.log.cur_counter = 0
+
 # %%
 if ablation_type == "oa":
     max_batches = 6000
@@ -107,6 +156,7 @@ else:
     max_batches = 3000
     
 for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
+
     plotting = no_batches % (-1 * pruning_cfg.record_every) == -1
     checkpointing = no_batches % (-1 * pruning_cfg.checkpoint_every * pruning_cfg.record_every) == -1
 
@@ -130,6 +180,20 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     prev_alphas = mask_sampler.get_sampling_params()[:,0].detach().clone()
 
+    # if prune_retrain:
+    #     edge_pruner.log.cur_counter += 1
+    #     if edge_pruner.log.mode == "prune":
+    #         sampling_optimizer.step()
+
+    #         if edge_pruner.log.cur_counter >= prune_length:
+    #             edge_pruner.log.cur_counter = 0
+    #             edge_pruner.log.mode = "retrain"
+    #             modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
+
+    #     elif edge_pruner.log.cur_counter >= retrain_length:
+    #         edge_pruner.log.cur_counter = 0
+    #         edge_pruner.log.mode = "prune"
+    # else:
     sampling_optimizer.step()
 
     if ablation_type == "oa":
@@ -156,3 +220,10 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
         take_snapshot("")
         if checkpointing:
             take_snapshot(f"-{no_batches}")
+        # if edge_pruner.early_term() >= 10:
+        #     take_snapshot("-final")
+        #     break
+    
+    # if reset_optim is not None and no_batches % (-1 * reset_optim) == -1:
+    #     modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
+# %%

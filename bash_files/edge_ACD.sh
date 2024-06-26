@@ -50,14 +50,14 @@ $CONSTRAINT
 #SBATCH --gpus 1
 #SBATCH --mem=32000
 #SBATCH -t 0-12:00
-#SBATCH -o prog_files/eACD_$DATASET-$var-%j.out  # File to which STDOUT will be written, %j inserts jobid
-#SBATCH -e prog_files/eACD_$DATASET-$var-%j.err  # File to which STDERR will be written, %j inserts jobid
+#SBATCH -o prog_files/eACD_$DATASET-$ABLATION-$var-%j.out  # File to which STDOUT will be written, %j inserts jobid
+#SBATCH -e prog_files/eACD_$DATASET-$ABLATION-$var-%j.err  # File to which STDERR will be written, %j inserts jobid
 
 # Your commands here
 module load Anaconda2
 conda activate take2
 
-$COMMAND1
+$COMMAND2
 
 EOT
 

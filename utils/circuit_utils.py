@@ -164,7 +164,7 @@ def retrieve_mask(folder, state_dict=False):
                 print("WARNING: out of order")
     else:
         print("TRAINING RUN NOT FOUND")
-        return None, None
+        return (None, None) if state_dict else None
     
     if state_dict:
         return prune_mask, previous_state['pruner_dict']

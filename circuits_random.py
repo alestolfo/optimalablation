@@ -9,7 +9,7 @@ from pruners.EdgePruner import EdgePruner
 from mask_samplers.MaskSampler import ConstantMaskSampler
 from utils.MaskConfig import EdgeInferenceConfig
 from utils.task_datasets import get_task_ds
-from utils.circuit_utils import discretize_mask, prune_dangling_edges, retrieve_mask, edges_to_mask
+from utils.circuit_utils import discretize_mask, prune_dangling_edges
 from utils.training_utils import load_model_data, LinePlot, load_args   
 import seaborn as sns
 import random
@@ -28,14 +28,12 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
 # %%
-args = load_args("pruning_random", None, {"desc": "oa", "minwindow": 400, "maxwindow": 500, "tau": 200})
+args = load_args("pruning_random", None, {"desc": "mean", "minwindow": 400, "maxwindow": 500, "tau": 200})
 uid = random.randint(1,10000000)
 print(uid)
 folder, dataset, ablation_type, min_edges, max_edges, n_circuits = args["folder"], args["dataset"], args["desc"], args["minwindow"], args["maxwindow"], args["tau"]
 
 folder = f"{folder}/{ablation_type}"
-
-cf_mode = ablation_type in {"resample", "cf"}
 
 if min_edges is None:
     min_edges = 400
@@ -102,8 +100,9 @@ sns.lineplot(rolling_targets)
 
 # %%
 mask_sampler = ConstantMaskSampler()
-init_attention, init_mlp = task_ds.init_modes()
-edge_pruner = EdgePruner(model, pruning_cfg, [init_attention, init_mlp], mask_sampler, counterfactual_mode=cf_mode)
+
+pruner_args = task_ds.get_pruner_args()
+edge_pruner = EdgePruner(model, pruning_cfg, mask_sampler, **pruner_args)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
@@ -116,10 +115,7 @@ for i, (circuit, edge_count) in enumerate(circuits):
     mask_sampler.set_mask(circuit)
 
     if ablation_type == "oa":
-        edge_pruner.modal_attention = torch.nn.Parameter(init_attention.clone())
-        edge_pruner.modal_mlp = torch.nn.Parameter(init_mlp.clone())
-        edge_pruner.log = LinePlot(["kl_loss"])
-        
+        edge_pruner.reset_parameters(pruner_args['init_modes'])        
         modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=5 * pruning_cfg.lr_modes, weight_decay=0)
 
         max_batches = 200
@@ -146,3 +142,4 @@ for i, (circuit, edge_count) in enumerate(circuits):
 
     if i % -10 == -1:
         torch.save({"loss": all_losses, "edges": all_edge_counts}, f"{folder}/log_{uid}.pth")
+# %%

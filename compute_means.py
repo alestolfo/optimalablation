@@ -27,9 +27,7 @@ from utils.task_datasets import get_task_ds
 means_only=True
 condition_pos=True
 dataset = "ioi"
-init_modes_path = f"oca/owt/means_attention.pkl"
-folder = f"results/oca/{dataset}"
-counterfactual=True
+counterfactual=False
 
 if len(argv) >= 2 and argv[0].startswith("compute_means"):
     print("Loading parameters")
@@ -38,6 +36,7 @@ if len(argv) >= 2 and argv[0].startswith("compute_means"):
     print(dataset, counterfactual)
 else:
     print("Not loading arguments", len(argv))
+folder = f"results/oca/{dataset}"
 
 # %%
 # model_name = "EleutherAI/pythia-70m-deduped"
@@ -47,10 +46,8 @@ device, model, tokenizer, owt_iter = load_model_data(model_name, batch_size)
 model.train()
 # model.cfg.use_attn_result = True
 
-# %%
-# task_ds = OWTConfig(owt_iter, device)
-task_ds = get_task_ds(dataset, batch_size, device)
-# task_ds = GTConfig(batch_size, device)
+ablation_type = "cf" if counterfactual else "oa"
+task_ds = get_task_ds(dataset, batch_size, device, ablation_type)
 
 # %%
 n_layers = model.cfg.n_layers
@@ -181,10 +178,10 @@ cf_tag = "cf_" if counterfactual else ""
 if means_only:
     with open(f"{folder}/means_{cf_tag}attention.pkl", "wb") as f:
         # [seq_pos, layer, head, d_head]
-        pickle.dump(running_sum / running_samples[:, None, None, None], f)
+        pickle.dump(running_sum / running_samples.clamp(min=1)[:, None, None, None], f)
     with open(f"{folder}/means_{cf_tag}mlp.pkl", "wb") as f:
         # [seq_pos, layer, d_model]
-        pickle.dump(running_mlp_sum / running_samples[:, None, None], f)
+        pickle.dump(running_mlp_sum / running_samples.clamp(min=1)[:, None, None], f)
     with open(f"{folder}/means_{cf_tag}samples.pkl", "wb") as f:
         pickle.dump(running_samples, f)
 # %%

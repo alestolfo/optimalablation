@@ -15,9 +15,11 @@ def retrieve_owt_data(batch_size, ctx_length, tokenizer, split="train", from_sav
     ds_path = f"{ds_folder}/{ds_name}.hf"
     if not os.path.exists(ds_path):
         dataset = datasets.load_dataset(ds_name, split="train")
-        dataset.save_to_disk(ds_path)
+        tokens_dataset = tokenize_and_concatenate(dataset, tokenizer, streaming=False, max_length=ctx_length, column_name="text", add_bos_token=True, num_proc=4)
+        tokens_dataset.save_to_disk(ds_path)
     else:
-        dataset = datasets.load_from_disk(ds_path)
+        print("Loading OWT data from disk")
+        tokens_dataset = datasets.load_from_disk(ds_path)
 
     # if split == "train":
     #     # use 80% of the data
@@ -26,9 +28,8 @@ def retrieve_owt_data(batch_size, ctx_length, tokenizer, split="train", from_sav
     #     # use 20% of the data
     #     dataset = dataset.select(range(int(0.8*len(dataset)), len(dataset)))
     # print(len(dataset))
-    tokens_dataset = tokenize_and_concatenate(dataset, tokenizer, streaming=False, max_length=ctx_length, column_name="text", add_bos_token=True, num_proc=4)
-    tokens_dataset
-    data_loader = DataLoader(tokens_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    print("Making DataLoader")
+    data_loader = DataLoader(tokens_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
     return data_loader
 
 

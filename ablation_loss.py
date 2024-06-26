@@ -31,17 +31,22 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
 # %%
-# desc: ablation type. Supported ablation types: zero, mean, oca, resample, refmean, cf
-args = load_args("ablation_loss", defaults={"desc": "oca", "dataset": "ioi"})
+# desc: ablation type. Supported ablation types: zero, mean, oa, resample, cf_mean, cf
+args = load_args("ablation_loss", defaults={"desc": "oa_specific", "dataset": "ioi"})
 folder, ablation_type, dataset = args["folder"], args["desc"], args["dataset"]
 
-oca_train = ablation_type == "oca" and not os.path.exists(f"{folder}/oca_modes.pth")
-
 pruning_cfg = VertexInferenceConfig(model.cfg, device, folder, init_param=1)
-pruning_cfg.batch_size = 3 if oca_train else 20
+pruning_cfg.batch_size = 10
+
+oa_train = False
+if ablation_type.startswith("oa"):
+    if os.path.exists(f"{folder}/{ablation_type}_modes.pth"):
+        init_modes = torch.load(f"{folder}/{ablation_type}_modes.pth")
+    else:
+        pruning_cfg.batch_size = 3
+        oa_train = True
 
 # fix_prompt: only resample from the same prompt
-# task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device, fix_prompt=(ablation_type == "resample"))
 task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device, ablation_type)
 
 for param in model.parameters():
@@ -51,35 +56,21 @@ for param in model.parameters():
 mask_sampler = SingleComponentMaskSampler(pruning_cfg)
 pruning_cfg.n_samples = mask_sampler.n_components
 
-if ablation_type == "zero":
-    zero_modes = []
-    init_modes = task_ds.init_modes()
-    for ts in init_modes:
-        zero_modes.append(torch.zeros_like(ts).to(device))
-    init_modes = zero_modes
-elif ablation_type == "refmean":
-    init_modes = task_ds.init_modes(True)
+pruner_args = task_ds.get_pruner_args({"zero", "mean", "resample", "cf_mean", "cf", "oa", "oa_specific"})
 
-# training mode if there are no recorded modes
-elif ablation_type == "oca" and not oca_train:
-    init_modes = torch.load(f"{folder}/oca_modes.pth")
-    init_modes = init_modes['modal_attention'], init_modes['modal_mlp']
-elif ablation_type == "mean" or ablation_type == "oca":
-    init_modes = task_ds.init_modes()
-else:
-    raise Exception("ablation type not found")
+if ablation_type.startswith("oa") and not oa_train:
+    pruner_args['init_modes'] = init_modes['modal_attention'], init_modes['modal_mlp']
 
-cf_mode = ablation_type in {"resample", "cf"}
-vertex_pruner = VertexPruner(model, pruning_cfg, init_modes, mask_sampler, counterfactual_mode=cf_mode)
+vertex_pruner = VertexPruner(model, pruning_cfg, mask_sampler, **pruner_args)
 vertex_pruner.add_patching_hooks()
 
 # %%
 
-if oca_train:
+if oa_train:
     max_batches = 10000
     modal_optimizer = torch.optim.AdamW([vertex_pruner.modal_attention, vertex_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
 else:
-    max_batches = 100
+    max_batches = 10000 // pruning_cfg.batch_size
     head_losses = torch.zeros((pruning_cfg.n_samples,1)).to(device)
     head_vars = torch.zeros((pruning_cfg.n_samples,1)).to(device)
 
@@ -98,7 +89,7 @@ def save_snapshot(head_losses, head_vars):
 for no_batches in tqdm(range(max_batches)):
     batch, last_token_pos, cf = task_ds.retrieve_batch_cf(tokenizer)
 
-    if oca_train:
+    if oa_train:
         modal_optimizer.zero_grad()
 
         loss = vertex_pruner(batch, last_token_pos)
@@ -106,8 +97,8 @@ for no_batches in tqdm(range(max_batches)):
         modal_optimizer.step()
 
         if no_batches % -100 == -1:
-            torch.save({"modal_attention": vertex_pruner.modal_attention, "modal_mlp": vertex_pruner.modal_mlp}, f"{folder}/oca_modes.pth")
-            vertex_pruner.log.plot(["kl_loss"], mv=100, save=f"{folder}/oca_train.png")
+            torch.save({"modal_attention": vertex_pruner.modal_attention, "modal_mlp": vertex_pruner.modal_mlp}, f"{folder}/{ablation_type}_modes.pth")
+            vertex_pruner.log.plot(["kl_loss"], mv=100, save=f"{folder}/{ablation_type}_train.png")
     else:
         with torch.no_grad():
             # loss: [n_components, batch_size]
@@ -117,7 +108,7 @@ for no_batches in tqdm(range(max_batches)):
         if no_batches % -100 == -1:
             save_snapshot(head_losses, head_vars)
 
-if not oca_train:
+if not oa_train:
     save_snapshot(head_losses, head_vars)
 
 # %%
@@ -158,13 +149,3 @@ if not oca_train:
 # sns.lineplot(var_diff)
 # # %%
 # torch.save({"head_loss": head_losses.unflatten(0, (n_layers, -1)), "head_var": head_vars.unflatten(0, (n_layers, -1))}, f"{folder}/mean_ablation_loss.pkl")
-    
-
-# sampling_optimizer = torch.optim.AdamW(mask_sampler.parameters(), lr=pruning_cfg.lr, weight_decay=0)
-# modal_optimizer = torch.optim.AdamW([vertex_pruner.modal_attention, vertex_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
-
-# %%
-
-# get mean ablation loss
-# back-prop: 
-# %%

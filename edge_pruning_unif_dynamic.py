@@ -36,14 +36,8 @@ n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
 # %%
-
-# 2.11: 2x window fixed
-# 2.12: 0.5 to 1.5 window
-# 2.13: 0.8 to 1.1 window
-# 2.14: 0.99 to 1.01 window
-# 2.15: print stuff, 0.999-1.001
-args = load_args("pruning", 1.5e-3, {
-    "desc": "cf",
+args = load_args("pruning", 4e-2, {
+    "desc": "mean",
     "name": "unif",
     "window": False,
     "minwindow": 0.5,
@@ -57,8 +51,6 @@ print("Lamb", reg_lamb)
 print("Dataset", dataset)
 print("Ablation type", ablation_type)
 print("Window", dynamic_window)
-
-cf_mode = ablation_type in {"resample", "cf"}
 
 # node_reg has same units as reg_lamb
 # at peak, node_reg adds 50% more regularization to each edge
@@ -78,7 +70,7 @@ else:
 
 if ablation_type == "cf":
     pruning_cfg.lr /= 5
-elif ablation_type == "resample":
+elif ablation_type == "resample" or ablation_type == "resample_agnostic":
     pruning_cfg.lr /= 2
 
 task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device, ablation_type)
@@ -96,7 +88,9 @@ if dynamic_window:
     print(mask_sampler.min_window)
     print(mask_sampler.max_window)
 
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, counterfactual_mode=cf_mode)
+pruner_args = task_ds.get_pruner_args(
+    {"mean", "resample", "cf", "oa", "mean_agnostic", "resample_agnostic"})
+edge_pruner = EdgePruner(model, pruning_cfg, mask_sampler, **pruner_args)
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 
@@ -107,7 +101,7 @@ if ablation_type == "oa":
     modal_optimizer = torch.optim.AdamW([edge_pruner.modal_attention, edge_pruner.modal_mlp], lr=pruning_cfg.lr_modes, weight_decay=0)
 else:
     modal_optimizer = None
-    if ablation_type == "mean":
+    if not edge_pruner.counterfactual_mode:
         edge_pruner.modal_attention.requires_grad = False
         edge_pruner.modal_mlp.requires_grad = False
 # %%
@@ -124,7 +118,6 @@ else:
     max_batches = 3000
     
 for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
-
     plotting = no_batches % (-1 * pruning_cfg.record_every) == -1
     checkpointing = no_batches % (-1 * pruning_cfg.checkpoint_every * pruning_cfg.record_every) == -1
 
@@ -136,8 +129,19 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     # sample prune mask
     graph_suffix = f"-{no_batches}" if checkpointing else "" if plotting else None
+    
     loss = edge_pruner(batch, last_token_pos, cf, graph_suffix=graph_suffix)
+    end = []
+    for x in range(2):
+        end.append(torch.cuda.Event(enable_timing=True))
+    end[0].record()
+
     loss.backward()
+
+    end[1].record()
+    torch.cuda.synchronize()
+    for i in [1]:
+        print("BACKWARD time", end[i-1].elapsed_time(end[i]))
 
     grad_norms = mask_sampler.clip_grad(5)
 
@@ -172,70 +176,6 @@ for no_batches in tqdm(range(edge_pruner.log.t, max_batches)):
 
     if plotting:
         take_snapshot("")
-
-        # bernoulli comparison plot
-        # grad = mask_sampler.sampling_params['attn-attn'][9].grad.flatten()
-        # print(grad[grad.nonzero()].shape)
-        # sns.scatterplot(x=mask_sampler.sampled_mask['attn-attn'][9].float().mean(dim=0).flatten()[grad.nonzero()].flatten().cpu().detach(),y=grad[grad.nonzero()].flatten().cpu())
-        # plt.xlabel("Prob inclusion in batch")
-        # plt.ylabel("Autograd")
-        # plt.savefig(f"bernoulli/prior/unif_prob_grad_{j}.png")
-        # plt.close()
-
-        # sns.scatterplot(x=mask_sampler.sampling_params['attn-attn'][9].float().detach().flatten()[grad.nonzero()].flatten().cpu().detach(),y=grad[grad.nonzero()].flatten().cpu())
-        # plt.xlabel("Sampling parameter")
-        # plt.ylabel("Autograd")
-        # plt.savefig(f"bernoulli/prior/unif_param_grad_{j}.png")
-
         if checkpointing:
             take_snapshot(f"-{no_batches}")
-
 # %%
-
-# total_grad_s = torch.cat([ts.flatten() for k in mask_sampler.total_grad_samples for ts in mask_sampler.total_grad_samples[k]], dim=0).cpu()
-# total_params = torch.cat([ts.flatten() for k in mask_sampler.sampling_params for ts in mask_sampler.sampling_params[k]], dim=0).sigmoid().detach().cpu()
-# # %%
-# sns.histplot(x=total_grad_s, y=total_params)
-# # %%
-
-# beta1, beta2 = sampling_optimizer.param_groups[0]['betas']
-
-# optim_state = sampling_optimizer.state_dict()['state']
-# momentums = torch.cat([(optim_state[x]['exp_avg'] / (1 - beta1 ** optim_state[x]['step'])).flatten() for x in optim_state], dim=0).cpu()
-# moment2 = torch.cat([(optim_state[x]['exp_avg_sq'] / (1 - beta2 ** optim_state[x]['step'])).flatten() for x in optim_state], dim=0).cpu()
-
-# # %%
-
-# plot_no_outliers(
-#     sns.histplot,
-#     0.001,
-#     total_params,
-#     (momentums / moment2.sqrt()) * pruning_cfg.lr
-# )
-
-# # %%
-# plot_no_outliers(
-#     sns.histplot,
-#     0,
-#     total_grad_s,
-#     (momentums / moment2.sqrt()) * pruning_cfg.lr
-# )
-
-# # %%
-# plot_no_outliers(
-#     sns.histplot,
-#     0.0001,
-#     total_grad_s,
-#     (moment2 - momentums.square()).sqrt()
-# )
-
-# # %%
-
-# plot_no_outliers(
-#     sns.histplot,
-#     0.001,
-#     total_params,
-#     moment2.sqrt()
-# )
-# # sns.histplot(x=total_grad_s, y=moment2, bins=100)
-# # %%

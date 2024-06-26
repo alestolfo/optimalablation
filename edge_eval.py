@@ -14,15 +14,14 @@ from pruners.EdgePruner import EdgePruner
 from mask_samplers.MaskSampler import ConstantMaskSampler
 from utils.MaskConfig import EdgeInferenceConfig
 from utils.task_datasets import get_task_ds
-from utils.circuit_utils import discretize_mask, prune_dangling_edges, retrieve_mask
 from utils.training_utils import load_model_data, LinePlot
 
 # %%
 
-dataset = "ioi"
-ablation_type = "cf"
-# dataset = argv[1]
-# ablation_type = argv[2]
+# dataset = "ioi"
+# ablation_type = "cf"
+dataset = argv[1]
+ablation_type = argv[2]
 
 if len(argv) > 3:
     transfer_folder = argv[3]
@@ -60,8 +59,6 @@ for technique in load_edges_dict:
         load_edges.append(load_edges_dict[technique])
 
 # %%
-cf_mode = ablation_type in {"resample", "cf"}
-
 batch_size=50
 pruning_cfg = EdgeInferenceConfig(model.cfg, device, folders[0], batch_size=batch_size)
 pruning_cfg.n_samples = 1
@@ -73,7 +70,9 @@ for param in model.parameters():
 
 # %%
 mask_sampler = ConstantMaskSampler()
-edge_pruner = EdgePruner(model, pruning_cfg, task_ds.init_modes(), mask_sampler, counterfactual_mode=cf_mode)
+edge_pruner = EdgePruner(model, pruning_cfg, mask_sampler, **task_ds.get_pruner_args({
+    "mean", "mean_agnostic", "resample", "resample_agnostic", "cf", "oa"
+}))
 edge_pruner.add_cache_hooks()
 edge_pruner.add_patching_hooks()
 

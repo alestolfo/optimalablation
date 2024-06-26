@@ -129,7 +129,12 @@ class InferenceConfig:
         pruner_dict = component_pruner.state_dict()
         pruner_dict = {k: pruner_dict[k] for k in pruner_dict if not k.startswith("base_model")}
         snapshot_dict['pruner_dict'] = pruner_dict
-        if modal_optimizer is not None:
+        if modal_optimizer is None:
+            if "modal_attention" in pruner_dict:
+                del pruner_dict['modal_attention']
+            if "modal_mlp" in pruner_dict:
+                del pruner_dict['modal_mlp']
+        else:
             snapshot_dict['modal_optim_dict'] = modal_optimizer.state_dict()
         torch.save(snapshot_dict, snapshot_path)
 
@@ -147,9 +152,16 @@ class InferenceConfig:
             previous_state = torch.load(snapshot_path)
             sampling_optimizer.load_state_dict(previous_state['sampling_optim_dict'])
 
-            component_pruner.load_state_dict(previous_state['pruner_dict'], strict=False)
-            if modal_optimizer is not None:
+            pruner_dict = previous_state['pruner_dict']
+            if modal_optimizer is None:
+                if "modal_attention" in pruner_dict:
+                    del pruner_dict['modal_attention']
+                if "modal_mlp" in pruner_dict:
+                    del pruner_dict['modal_mlp']
+            else:
                 modal_optimizer.load_state_dict(previous_state['modal_optim_dict'])
+
+            component_pruner.load_state_dict(pruner_dict, strict=False)
 
             with open(metadata_path, "rb") as f:
                 x = pickle.load(f)
@@ -281,8 +293,6 @@ class InferenceConfig:
 
             with open(post_training_path, "wb") as f:
                 pickle.dump(log, f)
-
-
 # %%
     
 class EdgeInferenceConfig(InferenceConfig):

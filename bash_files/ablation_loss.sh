@@ -1,4 +1,11 @@
 #!/bin/bash
+
+COMMANDS=""
+for ablate in "oa_specific"
+do
+COMMANDS+="python3 ablation_loss.py -e $ablate -d $1; "
+done
+
 sbatch <<EOT
 #!/bin/bash
 #SBATCH -c 1
@@ -14,7 +21,7 @@ sbatch <<EOT
 # Your commands here
 module load Anaconda2
 conda activate take2
-python3 ablation_loss.py -e oca -d $1
-python3 ablation_loss.py -e oca -d $1
+
+$COMMANDS 
 
 EOT

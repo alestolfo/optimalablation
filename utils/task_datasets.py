@@ -42,16 +42,46 @@ class TaskDataset(Dataset):
             return self.data[index], self.last_token_pos[index], self.cf[index]
 
 class TaskConfig():
-    # generally: zero, mean, resample, cf_mean, cf, oa
+    # generally: zero, mean, mean_agnostic, resample, resample_agnostic, cf_mean, cf, oa
     def __init__(self, ds_name, batch_size, device, ablation_type="oa"):
         self.ds_name = ds_name
         self.batch_size = batch_size
         self.device = device
 
-        assert ablation_type in {"zero", "mean", "mean_agnostic", "resample", "resample_agnostic", "cf_mean", "cf", "oa"}
         self.ablation_type = ablation_type
         self.means = None
         self.ds = iter([])
+    
+    def get_pruner_args(self, ablation_types={"mean", "resample", "cf", "oa"}):
+        if self.ablation_type not in ablation_types:
+            raise Exception(f"ablation type {self.ablation_type} not allowed")
+        
+        pruner_args = {}
+        if self.ablation_type == "zero":
+            zero_modes = []
+            init_modes = self.init_modes()
+            for ts in init_modes:
+                zero_modes.append(torch.zeros_like(ts).to(ts.device))
+            pruner_args['init_modes'] = zero_modes
+        elif self.ablation_type == "mean" or self.ablation_type == "cf_mean":
+            pruner_args['init_modes'] = self.init_modes(None)
+            pruner_args['condition_pos'] = True
+        elif self.ablation_type == "mean_agnostic":
+            pruner_args['init_modes'] = self.init_modes(1)
+        elif self.ablation_type == "resample" or self.ablation_type == "cf":
+            pruner_args['counterfactual_mode'] = True
+            pruner_args['condition_pos'] = True
+        elif self.ablation_type == "resample_agnostic":
+            pruner_args['counterfactual_mode'] = True
+        elif self.ablation_type == "oa":
+            pruner_args['init_modes'] = self.init_modes()
+        elif self.ablation_type == "oa_specific":
+            pruner_args['init_modes'] = self.init_modes(None)
+            pruner_args['condition_pos'] = True
+        else:
+            raise Exception(f"ablation type {self.ablation_type} not supported")
+        
+        return pruner_args
 
     def process_means(self, all_means, samples, cutoff=None):
         if cutoff:
@@ -62,14 +92,16 @@ class TaskConfig():
         processed_means = []
         for means in all_means:
             # [seq_pos, layer, ...]
-            general_mean = (means[min_length:].permute(0,-1) * samples[min_length:]).sum(dim=-1) / samples[min_length:].sum()
+            s = samples[(..., *[None for _ in means.shape[1:]])]
+            
+            general_mean = (means[min_length:] * s[min_length:]).sum(dim=0) / s[min_length:].sum()
             processed_means.append(
-                torch.cat((means[:min_length],general_mean[None, :]), dim=0).transpose(0,1)
+                torch.cat((means[:min_length],general_mean[None, :]), dim=0)
                 if cutoff is None else general_mean
             )
         return processed_means
 
-    def init_modes(self, oa_init=False):
+    def init_modes(self, cutoff=9):
         cf_tag = "cf_" if self.ablation_type == "cf_mean" else ""
 
         with open(f"results/oca/{self.ds_name}/means_{cf_tag}attention.pkl", "rb") as f:
@@ -82,7 +114,7 @@ class TaskConfig():
             # seq_len
             samples = pickle.load(f)
 
-        return self.process_means([init_modes_attention, init_modes_mlp], samples, cutoff=9 if oa_init else None)
+        return self.process_means([init_modes_attention, init_modes_mlp], samples, cutoff=cutoff)
     
     def gen_ds(self, tokenizer):
         pass
@@ -95,10 +127,10 @@ class TaskConfig():
 
         batch = batch_data[0]
         last_token_pos = batch_data[1]
-        cf = batch_data[2] if self.ablation_type == "cf" else None
+        cf = None
 
-        if self.ablation_type == "resample":
-            permutation = gen_resample_perm(batch.shape[0]).to(self.device)
+        if self.ablation_type.startswith("resample"):
+            permutation = gen_resample_perm(batch.shape[0])
 
             cf = batch[permutation]
             # if resampled sequence i shorter than original sequence, move padding to left
@@ -106,8 +138,12 @@ class TaskConfig():
             for i in range(batch.shape[0]):
                 if padding_left[i] > 0:
                     cf[i] = torch.cat((cf[i,-padding_left[i]:], cf[i, :-padding_left[i]]), dim=-1)
-        
-        return batch, last_token_pos.int(), cf
+            cf = cf.to(self.device)
+            
+        elif self.ablation_type == "cf":
+            cf = batch_data[2].to(self.device)
+
+        return batch.to(self.device), last_token_pos.int().to(self.device), cf
         
 # class OWTConfig():
 #     def __init__(self, owt_iter, device):
@@ -207,11 +243,11 @@ class GTConfig(TaskConfig):
 #         last_token_pos = ((batch != tokenizer.pad_token_id) * torch.arange(batch.shape[1]).to(self.device)).argmax(dim=-1)
 #         return batch, last_token_pos
 
-def get_task_ds(dataset, bsz, device, fix_prompt=False):
+def get_task_ds(dataset, bsz, device, ablation_type="oa", fix_prompt=False):
     if dataset == "ioi":
-        task_ds = IOIConfig(bsz, device, fix_prompt=fix_prompt)
+        task_ds = IOIConfig(bsz, device, ablation_type, fix_prompt=fix_prompt)
     elif dataset == "gt":
-        task_ds = GTConfig(bsz, device)
+        task_ds = GTConfig(bsz, device, ablation_type)
     else:
         raise Exception(f"Dataset {dataset} not defined")
     return task_ds
