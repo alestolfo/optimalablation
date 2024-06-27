@@ -7,7 +7,7 @@ In this repository, we demo OA on three applications of ablation.
 2. Causal tracing ([Meng et al., 2022](https://arxiv.org/abs/2202.05262)
 3. Prediction with latent representations ([Belrose et al., 2023](https://arxiv.org/abs/2303.08112))
 
-We also propose Uniform Gradient Sampling (UGS), a methodological contribution to circuit discovery. Uniform Gradient Sampling is related to the ``reparameterization trick'' from [Louizos et al., 2018](https://arxiv.org/abs/1712.01312), which we refer to as HardConcrete Gradient Sampling (HCGS), but samples gradients according to a uniform distribution on ablation coefficients.
+We also propose Uniform Gradient Sampling (UGS), a methodological contribution to circuit discovery. Uniform Gradient Sampling is related to the "reparameterization trick" from [Louizos et al., 2018](https://arxiv.org/abs/1712.01312), which we refer to as HardConcrete Gradient Sampling (HCGS), but UGS samples gradients according to a mixture of the Uniform and Bernoulli distributions on ablation coefficients rather than a HardConcrete distribution.
 
 Our experiments are built to run on GPT-2.
 
