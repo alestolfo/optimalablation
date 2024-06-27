@@ -1,18 +1,10 @@
 import torch
-import numpy as np 
-from tqdm import tqdm
 from fancy_einsum import einsum
-import math
 from functools import partial
 import torch.optim
-import time
-import seaborn as sns
-import matplotlib.pyplot as plt
-import pickle
-from utils.training_utils import LinePlot
 from pruners.Pruner import Pruner
 
-class EdgePruner(torch.nn.Module):
+class EdgePruner(Pruner):
     def __init__(self, *args, 
                  # when caching previous attention heads,
                  # cache the Z-value before applying the OV matrix

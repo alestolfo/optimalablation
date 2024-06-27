@@ -1,16 +1,7 @@
 import torch
-import numpy as np 
-from tqdm import tqdm
-from fancy_einsum import einsum
-import math
 from functools import partial
 import torch.optim
-import time
-import seaborn as sns
-import matplotlib.pyplot as plt
-import pickle
 from pruners.Pruner import Pruner
-from utils.training_utils import LinePlot
 
 class VertexPruner(Pruner):
     def __init__(self, *args, **kwargs):
