@@ -1,4 +1,4 @@
-#### Optimal ablation
+# Optimal ablation
 
 Optimal ablation (OA) is a new ablation method for interpretability. OA sets a component’s value to the constant value that minimizes the expected loss incurred by the ablated model.
 
@@ -11,9 +11,9 @@ We also propose Uniform Gradient Sampling (UGS), a methodological contribution t
 
 Our experiments are built to run on GPT-2.
 
-### Circuit discovery
+## Circuit discovery
 
-## Pruners
+### Pruners
 
 Our code supports running HCGS and UGS. Both methods involve applying a partial ablation mask over model components with a coefficient on (0,1) for each component. To support this behavior, we use a pruner class, which is a wrapper around the base model with added hooks to perform these ablation interventions.
 
@@ -21,7 +21,7 @@ pruners/VertexPruner.py supports applying a mask of coefficients over vertices (
 pruners/EdgePruner.py supports applying a mask of coefficients over edges. We initialize the pruner by instantiating an EdgePruner and calling add_cache_hooks() and add_pruning_hooks(). 
 pruners/Pruner.py is a generic base class that provides functions for both vertex and edge pruning.
 
-## Mask samplers
+### Mask samplers
 
 The main difference between HCGS and UGS is how to sample the mask of ablation coefficients. We use a mask sampler class, which inherits from torch.nn.Module, to sample the coefficients according to some distributional parameters. When running a forward pass of each pruner class, we call MaskSampler.forward() and then access the MaskSampler.sampled_mask class member inside the forward pass of our pruner class to apply the ablation mask. We regularize on the distributional parameters directly by adding a loss term given by MaskSampler.get_mask_loss().
 
@@ -35,7 +35,7 @@ mask_samplers/EdgeMaskSampler.py contains:
 
 mask_samplers/AblationMaskSampler.py contains the SingleComponentMaskSampler class, which we use to set a constant mask in which a single component is left out.
 
-## Other important files
+### Other important files
 
 utils/MaskConfig.py provides the MaskConfig class, which includes configuration parameters and utility functions for training and evaluating sparse circuits, including an initialization function for mask parameters, functions to save and load previous training runs, and an evaluation function for selected circuits. 
 
@@ -45,14 +45,14 @@ edge_post_training.py evaluates OA on a proposed circuit by training the ablatio
 edge_eval.py evaluates all circuits in all subfolders of a given folder, which is useful because we sweep over regularization coefficients on the mask parameters to obtain circuits of different sizes.
 circuit_pareto_plot.py plots the evaluated circuits on Delta (KL-loss) and circuit size.
 
-## Miscellaneous files
+### Miscellaneous files
 
 circuit_utils.py contains utility functions for converting circuits between different formats (e.g. mask to list), counting circuit components, and pruning dangling edges.
 circuits_comparison.py compares different circuits.
 circuits_random.py generates and evaluates random circuits.
 circuits_random_plot.py visualizes the results for random circuits.
 
-### Causal tracing
+## Causal tracing
 
 utils/tracing_utils.py contains functions to run causal tracing (e.g. replacing subject token embeddings and patching in activations from clean to corrupted runs).
 causal_tracing_prep.py contains various functions for getting the datasets in the right format, and filtering datasets for factual prompts to which the model gets the answer correct.
@@ -61,7 +61,7 @@ causal_tracing.py trains OA for casual tracing.
 causal_tracing_eval.py evaluates causal tracing effects with OA and Gaussian noise on a test dataset.
 causal_tracing_plot.py generates plots.
 
-### Prediction with latents 
+## Prediction with latents 
 
 We propose OCA lens, an alternative to tuned lens that maps intermediate activations at the last token position to the final-layer activation by ablating later attention layers with constants.
 
@@ -73,7 +73,7 @@ lens_compare.py contains our main loss and causal faithfulness experiments.
 lens_eval.py evaluates the results of these experiments.
 lens_plot.py creates plots.
 
-### Utility files
+## Utility files
 
 utils/data.py provides some functions to load and process [OpenWebText](https://paperswithcode.com/dataset/openwebtext), an approximation of the training dataset for GPT-2.
 utils/training_utils.py provides general utility functions.
