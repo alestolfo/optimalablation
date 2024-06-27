@@ -88,10 +88,13 @@ class MultiComponentMaskSampler(torch.nn.Module):
 
         attn_mask = torch.ones((bsz, total_heads))
         attn_mask[ref_idx.flatten(), top_k_idx.flatten()] = 0
-        attn_mask = attn_mask + (1-attn_mask) * torch.rand_like(attn_mask)
+        attn_mask = attn_mask + (1-attn_mask) * (
+            torch.rand_like(attn_mask) + 
+            torch.stack(self.mask_perturb['attn'], dim=0).flatten()
+        )
         attn_mask = attn_mask.unflatten(1, (self.n_layers, -1)).to(self.device)
 
-        fixed_mask = {
+        self.sampled_mask = {
             "attn": [
                 attn_mask[:, i]
                 for i in range(self.n_layers)
@@ -101,13 +104,6 @@ class MultiComponentMaskSampler(torch.nn.Module):
                 for i in range(self.n_layers)
             ]
         }
-
-        self.sampled_mask = {}
-        for k in self.mask_perturb:
-            self.sampled_mask[k] = []
-            for i, ts in enumerate(self.mask_perturb[k]):
-                self.sampled_mask[k].append(fixed_mask[k][i] + torch.ones(bsz, *ts.shape).to(self.device) * ts)
-
         return 0, {}
 
     def record_state(self, j):
