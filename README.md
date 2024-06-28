@@ -35,7 +35,7 @@ The main difference between HCGS and UGS is how to sample the mask of ablation c
 - _EdgeMaskJointSampler_, which extends the _MaskSampler_ class for HCGS on edges. It adds an additional vertex regularization loss term, given by _EdgeMaskSampler.node_reg_loss()_, and the functionality of pruning dangling edges.
 - _EdgeMaskUnifSampler_, which we use for UGS on edges. We use a static window size by default, but this class can be modified for a dynamic window by setting _EdgeMaskUnifSampler.sampling_function = partial(EdgeMaskUnifSampler.sample_modified_unif, dynamic_window=True)_.
 
-mask_samplers/AblationMaskSampler.py contains the SingleComponentMaskSampler class, which we use to set a constant mask in which a single component is left out.
+**mask_samplers/AblationMaskSampler.py** contains the SingleComponentMaskSampler class, which we use to set a constant mask in which a single component is left out.
 
 ### Other important files
 
