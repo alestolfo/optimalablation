@@ -20,7 +20,8 @@ Our code supports running HCGS and UGS. Both methods involve applying a partial 
 **pruners/VertexPruner.py** supports applying a mask of coefficients over vertices (attention heads and MLP layers) when viewing the model as a computational graph. We initialize the pruner by instantiating a VertexPruner and calling add_pruning_hooks().
 
 **pruners/EdgePruner.py** supports applying a mask of coefficients over edges. We initialize the pruner by instantiating an EdgePruner and calling add_cache_hooks() and add_pruning_hooks(). 
-pruners/Pruner.py is a generic base class that provides functions for both vertex and edge pruning.
+
+**pruners/Pruner.py** is a generic base class that provides functions for both vertex and edge pruning.
 
 ### Mask samplers
 
