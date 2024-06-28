@@ -53,7 +53,7 @@ The main difference between HCGS and UGS is how to sample the mask of ablation c
 
 ### Miscellaneous files
 
-**circuit_utils.py** contains utility functions for converting circuits between different formats (e.g. mask to list), counting circuit components, and pruning dangling edges.
+**utils/circuit_utils.py** contains utility functions for converting circuits between different formats (e.g. mask to list), counting circuit components, and pruning dangling edges.
 
 **circuits_comparison.py** compares different circuits.
 
@@ -87,7 +87,7 @@ We propose OCA lens, an alternative to tuned lens that maps intermediate activat
 
 **lens_linear_oa.py** trains a linear approximation to OCA lens, which is useful for computing a linear basis for OCA lens.
 
-**lens_compare.py** contains our main loss and causal faithfulness experiments.
+**lens_compare.py** generates our predictive power results and runs our causal faithfulness experiments.
 
 **lens_eval.py** evaluates the results of these experiments.
 
@@ -100,5 +100,6 @@ We propose OCA lens, an alternative to tuned lens that maps intermediate activat
 **utils/training_utils.py** provides general utility functions.
 
 **utils/task_datasets.py** provides functions to load and process the Indirect Object Identification ([Wang et al., 2022](https://arxiv.org/abs/2211.00593)) and Greater-Than ([Hanna et al., 2022](https://arxiv.org/abs/2305.00586)) datasets, which are used as test cases for circuit discovery
-compute_means.py computes mean activations over a dataset for use with mean ablation.
+
+**compute_means.py** computes mean activations over a dataset for use with mean ablation.
 
