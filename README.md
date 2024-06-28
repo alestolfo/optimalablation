@@ -28,7 +28,7 @@ Our code supports running HCGS and UGS. Both methods involve applying a partial 
 The main difference between HCGS and UGS is how to sample the mask of ablation coefficients. We use a mask sampler class, which inherits from torch.nn.Module, to sample the coefficients according to some distributional parameters. When running a forward pass of each pruner class, we call _MaskSampler.forward()_ and then access the _MaskSampler.sampled_mask_ class member inside the forward pass of our pruner class to apply the ablation mask. We regularize on the distributional parameters directly by adding a loss term given by _MaskSampler.get_mask_loss()_.
 
 **mask_samplers/MaskSampler.py** contains:
-- _ConstantMaskSampler_, which allows us to supply a constant (deterministic mask). We use this class when evaluating a proposed circuit after training has converged.
+- _ConstantMaskSampler_, which allows us to supply a constant (deterministic) mask. We use this class when evaluating a proposed circuit after training has converged.
 - _MaskSampler_, which provides an basic implementation for HCGS on vertices.
 
 **mask_samplers/EdgeMaskSampler.py** contains:
