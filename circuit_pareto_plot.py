@@ -120,8 +120,8 @@ def plot_pareto(pms, log=False, suffix="", order=None, manual=False):
     plt.grid(visible=True, which='major', color='grey', linewidth=0.5)
     plt.grid(visible=True, which='minor', color='darkgoldenrod', linewidth=0.3)
     # plt.gca().yaxis.set_major_locator(MultipleLocator(0.01)) # y gridlines every 0.5 units
-    plt.xlabel(r"$|\tilde{E}|$ (edges in circuit)")
-    plt.ylabel(r"$\Delta$ (ablation loss gap)")
+    plt.xlabel(r"Edges in circuit $|\tilde{E}|$")
+    plt.ylabel(r"Ablation loss gap $\Delta$")
 
     def myLogFormat(y,pos):
         # print(y)
@@ -157,7 +157,9 @@ def plot_pareto(pms, log=False, suffix="", order=None, manual=False):
     else:
         plt.ylim(0,y_bound)
 
-    t, a = task_name.split("/", 1)
+    s = task_name.split("/")
+    t = s[0]
+    a = s[-1]
     if a in ablation_lookup:
         abl_type = f"{ablation_lookup[a]} ablation"
     else:
@@ -256,7 +258,7 @@ for dataset, ablation_type, x_bound, y_bound in l3:
             # "ACDC": (f"{root_folder}/acdc", "crimson"),
             "EP": (f"{root_folder}/ep", "purple"),
             # "EAP": (f"{root_folder}/eap", "green")
-        }, x_bound, y_bound, f"{dataset}/ep-demo")
+        }, x_bound, y_bound, f"{dataset}/ep-demo/{ablation_type}")
     for log in [True]:
         plot_pareto(folders, log=log, order=[0,1,4,3,2])
 

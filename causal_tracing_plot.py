@@ -112,6 +112,7 @@ all_probs = []
 desc = []
 
 # %%
+df = []
 for window_size, token_type in settings_list:
     f, axes = plt.subplots(1,2, figsize=(16,4))
     for i,node_type in enumerate(node_types):
@@ -183,6 +184,14 @@ for window_size, token_type in settings_list:
                 linewidth=0
             )
 
+            df.append({
+                "window": window_size,
+                "token": token_type,
+                "node": node_type,
+                "ablate": ablate_type,
+                **{k: aie_means[k] for k in range(aie_means.shape[0])}
+            })
+
             # bar_cont = plt.bar(
             #     np.arange(aie_means.shape[0]) + (0.15 if ablate_type=="oa" else -0.15), 
             #     aie_means,
@@ -216,6 +225,12 @@ for window_size, token_type in settings_list:
     plt.tight_layout()
     plt.savefig(f"{plot_folder}/{token_type}_{window_size}.png")
     plt.show()
+
+# %%
+print(agg_clean_mean)
+print(corrupted_means)
+pd.set_option("display.max_columns", 100)
+pd.DataFrame(df)
 # %%
 
 
