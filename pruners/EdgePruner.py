@@ -25,6 +25,9 @@ class EdgePruner(Pruner):
         self.cache_hooks = self.get_cache_hooks()
         self.patching_hooks = self.get_patching_hooks()
 
+        self.attention_cache = []
+        self.mlp_cache = []
+        
         if self.counterfactual_mode:
             self.cf_attention_cache = []
             self.cf_mlp_cache = []

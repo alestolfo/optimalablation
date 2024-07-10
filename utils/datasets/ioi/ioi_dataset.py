@@ -1,4 +1,7 @@
 """
+
+This code is copy pasted from the ACDC paper, which they copied from the IOI paper. 
+
 This is taken from mlab2 repo; arthur/induction branch
 
 It is a very slightly edited version of https://github.com/redwoodresearch/Easy-Transformer/blob/main/easy_transformer/ioi_dataset.py
@@ -724,7 +727,7 @@ class IOIDataset:
         self.prompt_type = prompt_type
 
         if nb_templates is None:
-            nb_templates = len(BABA_TEMPLATES)
+            nb_templates = 100000
 
         if prompt_type == "ABBA":
             self.templates = ABBA_TEMPLATES[:nb_templates].copy()

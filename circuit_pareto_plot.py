@@ -16,16 +16,16 @@ sns.set(rc={"xtick.bottom" : True, "ytick.left" : True})
 
 # %%
 
-with open("results/pruning/gt/oa/hc/post_training.pkl", "rb") as f:
-    x = pickle.load(f)
+# with open("results/pruning/gt/oa/hc/post_training.pkl", "rb") as f:
+#     x = pickle.load(f)
 
-for i, l in enumerate(x["lamb"]):
-    if l == "0.0002":
-        for k in x:
-            x[k].pop(i)
+# for i, l in enumerate(x["lamb"]):
+#     if l == "0.0002":
+#         for k in x:
+#             x[k].pop(i)
 
-with open("results/pruning/gt/oa/hc/post_training.pkl", "wb") as f:
-    pickle.dump(x, f)
+# with open("results/pruning/gt/oa/hc/post_training.pkl", "wb") as f:
+#     pickle.dump(x, f)
 
 
 # %%
@@ -44,95 +44,66 @@ plt.rc('legend', fontsize=CORR_SIZE)    # legend fontsize
 plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
 plot_folder="plots_export/pareto"
-task_lookup = {"ioi": "IOI", "gt": "Greater-Than"}
+task_lookup = {"ioi": "IOI", "ioi_baba": "IOI", "gt": "Greater-Than"}
 ablation_lookup = {"mean": "mean", "cf": "counterfactual", "resample": "resample", "oa": "optimal"}
 
 # %%
 
-def plot_points(k, x, color=None, suffix=""):
-    print(x)
-    log_file = f"{x}/post_training{suffix}.pkl"
-    print(log_file)
-    if os.path.exists(log_file):
-        with open(log_file, "rb") as f:
-            log = pickle.load(f)
-        # print(log)
+def plot_points(k, log_file, color=None, manual_only=False):
+    with open(log_file, "rb") as f:
+        log = pickle.load(f)
+    # print(log)
 
-        for i, lamb in enumerate(log['lamb']):
-            if lamb == "manual":
-                manual_run = {}
-                for ke in log:
-                    manual_run[ke] = log[ke].pop(i)
-                plt.plot(manual_run["clipped_edges"], manual_run["losses"], 'x', mew=7, markersize=15, color="red", label="manual")
-
-        loss_line = pd.DataFrame({
-            "clipped_edges": log["clipped_edges"],
-            "losses": log["losses"]
-        }).sort_values("clipped_edges")
-        loss_line["losses"] = loss_line["losses"].cummin()
-            
-        if color is not None:
-            ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k}", marker="o", s=30, color=color)
-            ax = sns.lineplot(x=loss_line["clipped_edges"], y=loss_line["losses"], color=color, linewidth=1.5)
-        else:
-            ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k}", marker="o", s=50)
-        
-        for i,t in enumerate(log['tau']):
-            if 'vertices' in log:
-                print(t, log["lamb"][i], log['clipped_edges'][i], log['vertices'][i], log['losses'][i])
-            else:
-                print(t, log["lamb"][i], log['clipped_edges'][i], log['losses'][i])
-    else:
-        print("NO POST TRAINING FOUND")
+    for i, lamb in enumerate(log['lamb']):
+        if lamb == "manual":
+            manual_run = {}
+            for ke in log:
+                manual_run[ke] = log[ke].pop(i)
+            plt.plot(manual_run["clipped_edges"], manual_run["losses"], 'x', mew=7, markersize=15, color=color, label=None if manual_only else "manual")
+     
+    if manual_only:
         return
-    return ax
 
+    loss_line = pd.DataFrame({
+        "clipped_edges": log["clipped_edges"],
+        "losses": log["losses"]
+    }).sort_values("clipped_edges")
+    loss_line["losses"] = loss_line["losses"].cummin()
+        
+    if color is not None:
+        ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k}", marker="o", s=30, color=color)
+        ax = sns.lineplot(x=loss_line["clipped_edges"], y=loss_line["losses"], color=color, linewidth=1.5)
+    else:
+        ax = sns.scatterplot(x=log["clipped_edges"], y=log["losses"], label=f"{k}", marker="o", s=50)
+    
+    for i,t in enumerate(log['tau']):
+        if 'vertices' in log:
+            print(t, log["lamb"][i], log['clipped_edges'][i], log['vertices'][i], log['losses'][i])
+        else:
+            print(t, log["lamb"][i], log['clipped_edges'][i], log['losses'][i])
+    return ax
 
 # plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
 # plt.rc('axes', labelsize=20)    # fontsize of the x and y labels
 
-def plot_pareto(pms, log=False, suffix="", order=None):
-    folder, manual_folder, y_bound, x_bound, task_name = pms
+def plot_pareto(pms, log=False, suffix="", order=None, manual=False):
+    folder, y_bound, x_bound, task_name = pms
 
     fig = plt.figure(figsize=(8,8))
+    method_list = set()                
     for k, (x, color) in folder.items():
-        if not os.path.exists(x):
-            continue
-
-        ax = None
-        print(x)
-        for path in glob.glob(f"{x}/report/*"):
-            # out_path=f"pruning_edges_auto/report/ioi_zero_init_{str(reg_lamb).replace('.', '-')}.pkl"
-            with open(path, "rb") as f:
-                log = pickle.load(f)
-            # print(log)
-            lamb = path.split("/")[-1].replace(".pkl","")
-            print(lamb)
-            # if k == "vertex":
-            #     print(log['tau'])
-            if ax is None:
-                ax = sns.lineplot(x=log["clipped_edges"], y=log["losses"], label=k)
-                color = ax.lines[-1].get_color()
-            else:
-                sns.lineplot(x=log["clipped_edges"], y=log["losses"], ax=ax, color=color)
-            
-            # print(log['tau'])
-            undot = True
-            for i,tau in enumerate(log['tau']):
-                if tau >= -0.5 and undot:
-                    plt.plot(log["clipped_edges"][i], log["losses"][i], 'k^')
-                    undot = False
-                if tau >= 1:
-                    plt.plot(log["clipped_edges"][i], log["losses"][i], 'ks')
-                    break
-        if suffix:
-            plot_points(k, x, color, suffix)
-        else:
-            plot_points(k, x, color)
-
-    for k, (x, color) in manual_folder.items():
         print(k)
-        plot_points(k, x, color)
+
+        log_file = f"{x}/post_training{suffix}.pkl"
+        if os.path.exists(log_file):
+            plot_points(k, log_file, color)
+            method_list.add(k)
+
+        if manual:
+            manual_log_file = f"{x.rsplit('/', 1)[0]}/acdc/post_training.pkl"
+            if os.path.exists(manual_log_file):
+                plot_points(k, manual_log_file, color, manual_only=True)           
+
         if os.path.exists(f"{x}/pre_training.pkl"):
             with open(f"{x}/pre_training.pkl", "rb") as f:
                 log = pickle.load(f)
@@ -149,8 +120,8 @@ def plot_pareto(pms, log=False, suffix="", order=None):
     plt.grid(visible=True, which='major', color='grey', linewidth=0.5)
     plt.grid(visible=True, which='minor', color='darkgoldenrod', linewidth=0.3)
     # plt.gca().yaxis.set_major_locator(MultipleLocator(0.01)) # y gridlines every 0.5 units
-    plt.xlabel("Edges in circuit")
-    plt.ylabel("KL loss")
+    plt.xlabel(r"$|\tilde{E}|$ (edges in circuit)")
+    plt.ylabel(r"$\Delta$ (KL-divergence)")
 
     def myLogFormat(y,pos):
         # print(y)
@@ -179,15 +150,6 @@ def plot_pareto(pms, log=False, suffix="", order=None):
         print(formatstring.format(y))
         return formatstring.format(y)
 
-
-        # return first_digit[0] *
-        # print('{{:.{:2d}f}}')
-        # # Insert that number into a format string
-        # formatstring = '{{:.{:' + first_digit + 'd}f}}'.format(decimalplaces)
-        # # Return the formatted tick label
-        # print(formatstring.format(y))
-        # return formatstring.format(y).replace("1", first_digit)
-
     if log:
         plt.yscale("log")
         plt.gca().yaxis.set_major_formatter(ticker.FuncFormatter(myLogFormat))
@@ -202,11 +164,16 @@ def plot_pareto(pms, log=False, suffix="", order=None):
         abl_type = f"ablation comparison"
     if order:
         handles, labels = plt.gca().get_legend_handles_labels()
-        if len(labels) >= 3:
+        if "ACDC" in method_list:
             if labels[2] == "manual":
-                h2 = plt.Line2D([0], [0], marker='x', markersize=8, mew=4, color='red', linestyle='None')
+                h2 = plt.Line2D([0], [0], marker='x', markersize=8, mew=4, color=handles[2].get_color(), linestyle='None')
                 handles[2] = h2
-            legend = plt.legend([handles[idx] for idx in order],[labels[idx] for idx in order])
+        if len(handles) == len(order):
+            legend = plt.legend([handles[idx] for idx in order],[labels[idx] for idx in order], loc='upper right')
+        else:
+            plt.legend(loc="upper right")
+    else:
+        plt.legend(loc="upper right")
 
     plt.suptitle(f"{task_lookup[t]} circuits, {abl_type}")
     plt.tight_layout()
@@ -216,10 +183,14 @@ def plot_pareto(pms, log=False, suffix="", order=None):
 
 # %%
 l = [
-    ("ioi", "cf", 0.2, 1200),
-    ("ioi", "oa", 0.14, 1200),
-    ("ioi", "mean", 1, 1200),
-    ("ioi", "resample", 5, 1200),
+    # ("ioi_baba", "cf", 0.2, 1200),
+    # ("ioi_baba", "oa", 0.14, 1200),
+    # ("ioi_baba", "mean", 1, 1200),
+    # ("ioi_baba", "resample", 5, 1200),
+    ("ioi", "cf", 0.2, 1800),
+    ("ioi", "oa", 0.14, 1800),
+    ("ioi", "mean", 1, 1800),
+    ("ioi", "resample", 5, 1800),
     # ("ioi", "mean_agnostic", 1, 1200),
     # ("ioi", "resample_agnostic", 5, 1200),
     ("gt", "cf", 0.2, 800),
@@ -238,8 +209,8 @@ for dataset, ablation_type, x_bound, y_bound in l:
             "UGS (ours)": (f"{root_folder}/unif", "black"), 
             "HCGS": (f"{root_folder}/hc", "blue"), 
             # "edges uniform window": "results/pruning/ioi/cf/unif_window", 
-        }, {
             "ACDC": (f"{root_folder}/acdc", "crimson"),
+            # "EP": (f"{root_folder}/ep", "purple"),
             "EAP": (f"{root_folder}/eap", "green")
         }, x_bound, y_bound, f"{dataset}/{ablation_type}")
     for log in [True]:
@@ -248,7 +219,7 @@ for dataset, ablation_type, x_bound, y_bound in l:
 # %%
 # ablation comparison results
 l2 = [
-    ("ioi", 1, 1200),
+    ("ioi", 1, 1800),
     ("gt", 0.4, 800)
 ]
 # comparison across ablation types
@@ -257,15 +228,29 @@ for dataset, x_bound, y_bound in l2:
     ax = None
     # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
     folders=({
-            "Mean": (f"{root_folder}/mean/unif", "purple"), 
-            "Resample": (f"{root_folder}/resample/unif", "green"), 
-            "Mean-agnostic": (f"{root_folder}/mean_agnostic/unif", "purple"), 
-            "Resample-agnostic": (f"{root_folder}/resample_agnostic/unif", "green"), 
+            "Mean": (f"{root_folder}/mean/unif", "indigo"), 
+            "Resample": (f"{root_folder}/resample/unif", "olive"), 
+            # "Mean-agnostic": (f"{root_folder}/mean_agnostic/unif", "purple"), 
+            # "Resample-agnostic": (f"{root_folder}/resample_agnostic/unif", "green"), 
             "Optimal": (f"{root_folder}/oa/unif", "black"), 
-            "Counterfactual": (f"{root_folder}/cf/unif", "maroon"), 
-        }, {}, x_bound, y_bound, f"{dataset}/comp/unif_")
+            "CF": (f"{root_folder}/cf/unif", "maroon"), 
+        }, x_bound, y_bound, f"{dataset}/comp/unif_")
     for log in [True]:
-        plot_pareto(folders, log=log, order=[2,0,1,3])
+        plot_pareto(folders, log=log, order=[2,0,1,3], manual=True)
+
+# %%
+fp = 'results/pruning/ioi/mean/acdc/post_training.pkl'
+with open(fp, "rb") as f:
+    l = pickle.load(f)
+
+# for i, x in enumerate(l['lamb']):
+#     if x == '0.012':
+#         for k in l:
+#             l[k].pop(i)
+
+# with open(fp, "wb") as f:
+#     pickle.dump(l, f)
+
 
 # %%
 l3 = [
@@ -290,13 +275,7 @@ for dataset, ablation_type, x_bound, y_bound in l:
         }
     my_type = ablation_lookup[ablation_type].capitalize()
     print(my_type)
-    my_folder = other_folders[my_type]
-    del other_folders[my_type]
-    folders=(other_folders, {
-            my_type: my_folder,
-            # "ACDC": (f"{root_folder}/acdc", "black"),
-            # "EAP": (f"{root_folder}/eap", "green")
-        }, x_bound, y_bound, f"{dataset}/{ablation_type}")
+    folders=(other_folders, x_bound, y_bound, f"{dataset}/{ablation_type}")
     for log in [False, True]:
         plot_pareto(folders, log=log, suffix=f"_{ablation_type}")
 

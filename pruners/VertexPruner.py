@@ -6,7 +6,8 @@ from pruners.Pruner import Pruner
 class VertexPruner(Pruner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs, parallel_inference=True)
-    
+        self.patching_hooks = self.get_patching_hooks()
+
     def process_null_val(self, node_type, layer_no):
         if node_type == "attn":
             null_val = self.null_vals['attn'][...,layer_no,:,:]

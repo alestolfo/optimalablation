@@ -30,7 +30,6 @@ class Pruner(torch.nn.Module):
                  # value for constant ablations
                  init_modes=None,
                  ):
-        
         super().__init__()
         self.base_model = model
         self.pruning_cfg = pruning_cfg
@@ -41,8 +40,6 @@ class Pruner(torch.nn.Module):
 
         columns = ['kl_loss', *self.mask_sampler.log_columns]
         self.log = LinePlot(columns)
-
-        self.patching_hooks = self.get_patching_hooks()
 
         self.last_token_mask = None
 
@@ -111,7 +108,10 @@ class Pruner(torch.nn.Module):
         return torch.cat([self.modal_attention.flatten(start_dim=1,end_dim=2), self.modal_mlp], dim=0)
 
     def setup_inference(self, batch, last_token_pos):
-        if self.condition_pos:
+        if self.counterfactual_mode:
+            if not self.condition_pos:
+                self.perms = [torch.randperm(n).to(batch.device) for n in last_token_pos]
+        elif self.condition_pos:
             # seq_pos x i x n_heads x d_head
             null_attn = self.modal_attention
 
@@ -129,10 +129,7 @@ class Pruner(torch.nn.Module):
             
             self.null_vals['attn'] = null_attn
             self.null_vals['mlp'] = null_mlp
-            
-        elif self.counterfactual_mode:
-            self.perms = [torch.randperm(n).to(batch.device) for n in last_token_pos]
-
+        
         with torch.no_grad():
             last_token_mask = torch.zeros_like(batch).to(batch.device)
             last_token_mask[torch.arange(last_token_mask.shape[0]), last_token_pos] = 1

@@ -34,6 +34,8 @@ print(uid)
 folder, dataset, ablation_type, min_edges, max_edges, n_circuits = args["folder"], args["dataset"], args["desc"], args["minwindow"], args["maxwindow"], args["tau"]
 
 folder = f"{folder}/{ablation_type}"
+if not os.path.exists(folder):
+    os.makedirs(folder)
 
 if min_edges is None:
     min_edges = 400

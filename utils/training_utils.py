@@ -382,7 +382,7 @@ def plot_no_outliers(plot_fn, alpha, x, y, ax=None, xy_line=False, args={}):
     if "title" in args:
         cur_ax.set_title(args["title"])
     if "corr" in args:
-        corr = round(np.corrcoef(x,y)[0,1],2)
+        corr = round(np.corrcoef(x,y)[0,1],3)
         ax.text(.05, .8, f"r={corr}", transform=cur_ax.transAxes)
     if "f" in args:
         plt.savefig(args["f"])

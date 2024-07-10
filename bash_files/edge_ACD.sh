@@ -36,10 +36,21 @@ for var in "$@"
 do
 
 COMMAND1="python3 edge_pruning$ACD_TYPE.py -d $DATASET -l $var -n $RUN_NAME -e $ABLATION $WINDOW"
-echo $COMMAND1
 
+if [ $ABLATION == "oa" ]
+then
 COMMAND2="python3 edge_post_training.py -d $DATASET -n $RUN_NAME -e $ABLATION -t "0.5" -l $var"
-echo $COMMAND2
+COMMAND="if $COMMAND1; then
+    $COMMAND2
+else
+    echo 'failure so did not run post training'
+fi
+"
+else
+COMMAND="$COMMAND1"
+fi
+
+echo $COMMAND
 
 sbatch <<EOT
 #!/bin/bash
@@ -57,16 +68,8 @@ $CONSTRAINT
 module load Anaconda2
 conda activate take2
 
-$COMMAND2
+$COMMAND
 
 EOT
-
-
-# if $COMMAND1; then
-#     $COMMAND2
-# else
-#     echo "failure so did not run post training"
-# fi
-# $COMMAND2
 
 done

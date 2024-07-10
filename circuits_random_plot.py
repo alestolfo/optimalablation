@@ -16,9 +16,14 @@ sns.set()
 
 # %%
 epochs = 200
-limits = {"ioi": (400,500), "gt": (200,300)}
+limits = {
+    "ioi": (400,500),
+    "gt": (200,300)}
 
-dataset_list = {"gt": "Greater-Than", "ioi": "IOI"}
+dataset_list = {
+    "gt": "Greater-Than", 
+    "ioi": "IOI"
+}
 ablation_types = [
     "mean", "resample", "oa", 
     "cf"]
@@ -31,6 +36,7 @@ ax_labels = {
 ablation_type="oa"
 
 for (ds, ablation_type) in product(limits, ablation_types):
+    print("Ablation type", ablation_type)
     out_folder = f"results/pruning_random/{ds}/{ablation_type}"
     min_edges, max_edges = limits[ds]
 
@@ -88,19 +94,21 @@ for (ds, ablation_type) in product(limits, ablation_types):
             print(f"FILE {acd_file} not found")
                 
     if good_edges is not None:
+        print("UGS loss", good_loss)
         zscore = round((good_loss-mean) / stdev, 2)
         left_align = (max_edges - good_edges) < 32
-        plt.plot(good_edges, good_loss, '*', markersize=10, color="red", label="UGS circuit")
-        plt.text(x=good_edges + (-2 if left_align else 2), y=good_loss, s = f"   Z-score: {zscore}", va="bottom", ha="right" if left_align else "left")
+        print('Z score', zscore)
+        # plt.plot(good_edges, good_loss, '*', markersize=10, color="red", label="UGS circuit")
+        # plt.text(x=good_edges + (-2 if left_align else 2), y=good_loss, s = f"   Z-score: {zscore}", va="bottom", ha="right" if left_align else "left")
     
-    sns.scatterplot(x=agg_edges, y=agg_losses, label="Random circuits", s=10)
-    plt.title(f"{ax_labels[ablation_type]} ablation on {dataset_list[ds]}, random circuits")
-    plt.savefig(f"{out_folder}/z.png")
-    plt.show()
+    # sns.scatterplot(x=agg_edges, y=agg_losses, label="Random circuits", s=10)
+    # plt.title(f"{ax_labels[ablation_type]} ablation on {dataset_list[ds]}, random circuits")
+    # plt.savefig(f"{out_folder}/z.png")
+    # plt.show()
 
-    sns.histplot(agg_losses, label="Random circuits")
-    plt.title(f"{ax_labels[ablation_type]} ablation on {dataset_list[ds]}, random circuits")
-    plt.savefig(f"{out_folder}/dist.png")
-    plt.show()
+    # sns.histplot(agg_losses, label="Random circuits")
+    # plt.title(f"{ax_labels[ablation_type]} ablation on {dataset_list[ds]}, random circuits")
+    # plt.savefig(f"{out_folder}/dist.png")
+    # plt.show()
 # %%
 

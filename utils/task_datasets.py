@@ -156,15 +156,16 @@ class TaskConfig():
 #         return batch, batch.shape[1] - 1
 
 class IOIConfig(TaskConfig):
-    def __init__(self, batch_size, device, ablation_type="oa", fix_prompt=False, test=False):
+    def __init__(self, batch_size, device, ablation_type="oa", fix_prompt=False, baba=False, test=False):
         super().__init__("ioi", batch_size, device, ablation_type)
 
         self.seed = 293088429 if test else 0
         self.fix_prompt = fix_prompt
+        self.baba = baba
 
     def gen_ds(self, tokenizer):
         ioi_dataset = IOIDataset(
-            prompt_type="ABBA",
+            prompt_type="ABBA" if self.baba else "mixed",
             N=self.batch_size * 100,
             # if fix prompt, output only one prompt template per batch to enable resamples
             nb_templates=random.randint(1,15) if self.fix_prompt else None,
@@ -246,6 +247,8 @@ class GTConfig(TaskConfig):
 def get_task_ds(dataset, bsz, device, ablation_type="oa", fix_prompt=False):
     if dataset == "ioi":
         task_ds = IOIConfig(bsz, device, ablation_type, fix_prompt=fix_prompt)
+    elif dataset == "ioi_baba":
+        task_ds = IOIConfig(bsz, device, ablation_type, baba=True)
     elif dataset == "gt":
         task_ds = GTConfig(bsz, device, ablation_type)
     else:

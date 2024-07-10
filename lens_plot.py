@@ -24,10 +24,10 @@ from utils.lens_utils import LensExperiment, compile_loss_dfs, corr_plot, overal
 sns.set()
 
 
-CORR_SIZE = 16
-SMALL_SIZE = 18
-MEDIUM_SIZE = 18
-BIGGER_SIZE = 24
+CORR_SIZE = 20
+SMALL_SIZE = 24
+MEDIUM_SIZE = 24
+BIGGER_SIZE = 32
 
 plt.rc('font', size=CORR_SIZE)          # controls default text sizes
 plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
@@ -44,7 +44,7 @@ if not os.path.exists(plot_folder):
 
 all_models = ["gpt2-small", "gpt2-medium", "gpt2-large", "gpt2-xl"]
 
-ax_labels={"tuned": "Tuned lens", "modal": "OCA lens", "mean": "Mean ablation", "resample": "Resample ablation"}
+ax_labels={"tuned": "Tuned lens", "modal": "OCA lens", "mean": "Mean", "resample": "Resample"}
 # %%
 titles = {"proj_sing": "basis projection", "proj_rand": "random projection", "steer_rand": "random perturbation", "steer_sing": "basis-aligned perturbation", "resample_100": "resample basis directions"}
 
@@ -121,10 +121,12 @@ def get_shades(lens):
         shades = yellow_shades
     return shades
 
-CORR_SIZE = 16
-SMALL_SIZE = 18
-MEDIUM_SIZE = 18
-BIGGER_SIZE = 24
+colors={"tuned": "red", "mean": "indigo", "resample": "olive", "modal": "black"}
+
+CORR_SIZE = 20
+SMALL_SIZE = 24
+MEDIUM_SIZE = 24
+BIGGER_SIZE = 32
 
 plt.rc('font', size=CORR_SIZE)          # controls default text sizes
 plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
@@ -157,12 +159,12 @@ for model_name in all_models:
             continue
         # print(k)
         # print(list(vanilla_losses[f"{k}"]))
-        sns.lineplot(list(vanilla_losses[f"{k}"]), color=get_shades(k)[0], label=f"{ax_labels[k]}", linewidth=lw[i])
+        sns.lineplot(list(vanilla_losses[f"{k}"]), color=colors[k], label=f"{ax_labels[k]}", linewidth=lw[i])
         # plt.show()
         plt.ylim(-0.2,5.3)
         plt.xlabel("Layer number")
         plt.ylabel("KL-divergence")
-        plt.suptitle(f"Lens losses on {mn}")
+        plt.suptitle(f"Lens loss, {mn}")
         plt.tight_layout()
         plt.savefig(f"{plot_folder}/overall-{mn}.png")
     continue

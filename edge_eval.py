@@ -18,7 +18,7 @@ from utils.training_utils import load_model_data, LinePlot
 
 # %%
 
-# dataset = "ioi"
+# dataset = "ioi_baba"
 # ablation_type = "cf"
 dataset = argv[1]
 ablation_type = argv[2]
@@ -27,7 +27,7 @@ if len(argv) > 3:
     transfer_folder = argv[3]
 else:
     transfer_folder = ablation_type
-re_eval = True 
+re_eval = False 
 # %%
 
 # load model
@@ -45,6 +45,7 @@ n_heads = model.cfg.n_heads
 load_edges_dict = {
     "acdc": True,
     "eap": True,
+    "ep": True,
     "hc": False, 
     "unif": False
 }
@@ -69,6 +70,7 @@ for param in model.parameters():
     param.requires_grad = False
 
 # %%
+model.reset_hooks()
 mask_sampler = ConstantMaskSampler()
 edge_pruner = EdgePruner(model, pruning_cfg, mask_sampler, **task_ds.get_pruner_args({
     "mean", "mean_agnostic", "resample", "resample_agnostic", "cf", "oa"
