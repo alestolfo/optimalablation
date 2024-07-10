@@ -261,12 +261,72 @@ for dataset, ablation_type, x_bound, y_bound in l3:
         plot_pareto(folders, log=log, order=[0,1,4,3,2])
 
 # %%
-fp = 'results/pruning/ioi/mean/acdc/post_training.pkl'
+datasets = {"ioi", "gt"}
+ablation_types = {"cf", "oa", "mean", "resample"}
+methods = {"acdc", "eap", "hc", "unif"}
+my_df = []
+for dataset, ablation_type, method in [
+    (x,y,z) for x in datasets for y in ablation_types for z in methods
+]:
+    path = f"results/pruning/{dataset}/{ablation_type}/{method}/post_training.pkl"
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            log = pickle.load(f)
+        for i, l in enumerate(log['lamb']):
+            my_df.append({
+                "dataset": dataset,
+                "ablation": ablation_type,
+                "method": method,
+                "lamb": l,
+                "loss": log['losses'][i],
+                "edges": log["clipped_edges"][i]
+            })
+
+df = pd.DataFrame(my_df)
+df.to_csv(f"{plot_folder}/master.csv")
+
+# %%
+pd.set_option("display.max_rows", 200)
+# display(df[df["lamb"] == "manual"])
+# %%
+ratio_df = df[(df["lamb"] == "manual") & (df["ablation"] == "oa")][["dataset","loss"]].merge(df[df["lamb"] == "manual"], on="dataset")
+ratio_df["ratio"] = 1-ratio_df["loss_x"] / ratio_df["loss_y"]
+
+# %%
+IOI_MANUAL_EDGES = 963
+below_df = df[(df["method"] == "unif") & (df["dataset"] == "ioi") & (df['edges'] < IOI_MANUAL_EDGES)].sort_values('edges', ascending=False).groupby("ablation").head(1)
+above_df = df[(df["method"] == "unif") & (df["dataset"] == "ioi") & (df['edges'] > IOI_MANUAL_EDGES)].sort_values('edges', ascending=True).groupby("ablation").head(1)
+
+comp_df = below_df.merge(above_df, on=["dataset", "ablation"])
+comp_df['imputed'] = comp_df['loss_x'] + (comp_df['loss_y'] - comp_df['loss_x']) / (comp_df['edges_y'] - comp_df['edges_x']) * (IOI_MANUAL_EDGES - comp_df['edges_x'])
+
+comp_df = comp_df.merge(ratio_df[["ablation", "loss_y", "dataset"]].rename(columns={"loss_y": "manual_loss"}), on=["dataset", "ablation"])
+comp_df['pct'] = 1-comp_df['imputed'] / comp_df['manual_loss']
+comp_df['imputed_ratio'] = 1 - comp_df.loc[comp_df["ablation"] == "oa", 'imputed'].iloc[0] / comp_df['imputed']
+comp_df
+
+# %%
+GT_MANUAL_EDGES = 235
+below_df = df[(df["method"] == "unif") & (df["dataset"] == "gt") & (df['edges'] <= GT_MANUAL_EDGES)].sort_values('edges', ascending=False).groupby("ablation").head(1)
+above_df = df[(df["method"] == "unif") & (df["dataset"] == "gt") & (df['edges'] > GT_MANUAL_EDGES)].sort_values('edges', ascending=True).groupby("ablation").head(1)
+
+comp_df = below_df.merge(above_df, on=["dataset", "ablation"])
+comp_df['imputed'] = comp_df['loss_x'] + (comp_df['loss_y'] - comp_df['loss_x']) / (comp_df['edges_y'] - comp_df['edges_x']) * (GT_MANUAL_EDGES - comp_df['edges_x'])
+
+comp_df = comp_df.merge(ratio_df[["ablation", "loss_y", "dataset"]].rename(columns={"loss_y": "manual_loss"}), on=["dataset", "ablation"])
+comp_df['pct'] = 1-comp_df['imputed'] / comp_df['manual_loss']
+comp_df['imputed_ratio'] = 1 - comp_df.loc[comp_df["ablation"] == "oa", 'imputed'].iloc[0] / comp_df['imputed']
+comp_df
+
+# %%
+
+# %%
+fp = 'results/pruning/ioi/oa/unif/post_training.pkl'
 with open(fp, "rb") as f:
     l = pickle.load(f)
 
 for i, x in enumerate(l['lamb']):
-    if x == '0.012':
+    if x == '0.03':
         for k in l:
             l[k].pop(i)
 
