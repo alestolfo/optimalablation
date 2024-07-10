@@ -121,7 +121,7 @@ def plot_pareto(pms, log=False, suffix="", order=None, manual=False):
     plt.grid(visible=True, which='minor', color='darkgoldenrod', linewidth=0.3)
     # plt.gca().yaxis.set_major_locator(MultipleLocator(0.01)) # y gridlines every 0.5 units
     plt.xlabel(r"$|\tilde{E}|$ (edges in circuit)")
-    plt.ylabel(r"$\Delta$ (KL-divergence)")
+    plt.ylabel(r"$\Delta$ (ablation loss gap)")
 
     def myLogFormat(y,pos):
         # print(y)
@@ -239,17 +239,39 @@ for dataset, x_bound, y_bound in l2:
         plot_pareto(folders, log=log, order=[2,0,1,3], manual=True)
 
 # %%
+
+l3 = [
+    ("ioi", "cf", 0.2, 1800),
+    ("gt", "resample", 0.2, 800),
+]
+for dataset, ablation_type, x_bound, y_bound in l3:
+    root_folder = f"results/pruning/{dataset}/{ablation_type}"
+    ax = None
+    # reg_lambs = [2e-3, 1e-3, 7e-4, 5e-4, 2e-4, 1e-4]
+    folders=({
+            # "vertex": "results/pruning_vertices_auto/ioi", 
+            "UGS (ours)": (f"{root_folder}/unif", "black"), 
+            "HCGS": (f"{root_folder}/hc", "blue"), 
+            # "edges uniform window": "results/pruning/ioi/cf/unif_window", 
+            # "ACDC": (f"{root_folder}/acdc", "crimson"),
+            "EP": (f"{root_folder}/ep", "purple"),
+            # "EAP": (f"{root_folder}/eap", "green")
+        }, x_bound, y_bound, f"{dataset}/ep-demo")
+    for log in [True]:
+        plot_pareto(folders, log=log, order=[0,1,4,3,2])
+
+# %%
 fp = 'results/pruning/ioi/mean/acdc/post_training.pkl'
 with open(fp, "rb") as f:
     l = pickle.load(f)
 
-# for i, x in enumerate(l['lamb']):
-#     if x == '0.012':
-#         for k in l:
-#             l[k].pop(i)
+for i, x in enumerate(l['lamb']):
+    if x == '0.012':
+        for k in l:
+            l[k].pop(i)
 
-# with open(fp, "wb") as f:
-#     pickle.dump(l, f)
+with open(fp, "wb") as f:
+    pickle.dump(l, f)
 
 
 # %%
