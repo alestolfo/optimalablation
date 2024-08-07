@@ -67,7 +67,7 @@ EXAMPLES_RESAMPLE = 1000
 
 # %%
 # model_name = "gpt2-small"
-batch_size = CAUSAL_BATCH_SIZE
+batch_size = CAUSAL_BATCH_SIZE * (30 if dir_mode == "vanilla" else 1)
 # 100K OWT samples with default sequence length: 235134
 device, model, tokenizer, owt_iter = load_model_data("gpt2-small", batch_size)
 model = HookedTransformer.from_pretrained(model_name, device=device)
@@ -110,7 +110,7 @@ if dir_mode == "vanilla":
         lens_list.append("resample")
     
     # get vanilla losses
-    if not os.path.exists(f"{folders['linear_oa']}/original.p"):
+    if not os.path.exists(f"{folders['linear_oa']}/original.pth"):
         vanilla_losses = exp.get_vanilla_losses(lens_list, pics_folder=folders['linear_oa'])
         torch.save(vanilla_losses, f"{folders['linear_oa']}/original.pth")
 

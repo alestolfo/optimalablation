@@ -20,7 +20,7 @@ import pickle
 from itertools import cycle
 from utils.training_utils import load_model_data, LinePlot, gen_resample_perm
 from torch.utils.data import DataLoader
-from utils.tracing_utils import get_subject_tokens, ct_inference
+from utils.tracing_utils import get_subject_tokens, ct_inference, ct_inference_coherence
 # %%
 
 # filter for correct prompts
@@ -66,6 +66,9 @@ train_split = 0.6
 causal_layers = [i for i in range(0,48)]
 ct_layers = len(causal_layers)
 
+# %%
+
+# AIE evals
 for window_size, token_type, node_type, ablate_type in [
     (w,x,y,z) 
     for w in [
@@ -136,6 +139,50 @@ for window_size, token_type, node_type, ablate_type in [
     torch.save(all_corrupted_probs, f"{folder}/{ablate_type}_corrupted_probs.pth")
     torch.save(aie_probs, f"{folder}/{ablate_type}_aie.pth")
 
+# %% 
+
+# coherence evals
+
+# for ablate_type in ["oa", "gauss"]:
+null_token_folder = f"{base_folder}/all_subject/mlp/0"
+n_samples_per_prompt = 5
+
+with open(f"{ds_path}/{ds_name}.pkl", 'rb') as f:
+    correct_prompts = pickle.load(f)
+test_start = math.ceil(train_split * len(correct_prompts))
+correct_prompts = correct_prompts[test_start:]
+
+data_loader = DataLoader(correct_prompts, batch_size=batch_size, shuffle=True)
+
+with open(f"{null_token_folder}/null_tokens_{causal_layers[0]}_{causal_layers[-1]}.pkl", "rb") as f:
+    null_token = pickle.load(f).to(device)[[-1]]
+
 # %%
 
-# # %%
+coherence_evals = {}
+
+for ablate_type in [None, "oa", "gauss"]:
+    coherence_evals[ablate_type] = []
+    data_iter = iter(data_loader)
+
+    for i, batch in enumerate(tqdm(data_iter)):
+
+        with torch.no_grad():
+            tokens, subject_pos = get_subject_tokens(batch, tokenizer, mode=mode)
+            tokens = tokens.to(device)
+
+            repeated_tokens, completions = ct_inference_coherence(model, tokens, subject_pos, stds if ablate_type == "gauss" else null_token, ablate_type)
+
+            repeated_tokens = tokenizer.batch_decode(repeated_tokens)
+            completions = tokenizer.batch_decode(completions)
+
+        for prompt, completion in zip(repeated_tokens, completions):
+            coherence_evals[ablate_type].append({
+                "prompt": prompt,
+                "completion": completion
+            })
+
+for ablate_type in coherence_evals:
+    coherence_evals[ablate_type] = pd.DataFrame(coherence_evals[ablate_type])
+    coherence_evals[ablate_type].to_csv(f"{base_folder}/coherence-results-{ablate_type}.csv")
+# %%

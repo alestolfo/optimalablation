@@ -180,6 +180,88 @@ class EdgeMaskUnifSampler(EdgeMaskJointSampler):
             torch.nn.utils.clip_grad_norm_(self.sampling_params[k], max_norm=bound)
         return grad_norms
 
+class EdgeMaskUnifCovarSampler(EdgeMaskUnifSampler):
+    def __init__(self, pruning_cfg, node_reg=0, stds={"attn": 1, "mlp": 1, "edge": 1}):
+        super().__init__(pruning_cfg, node_reg)
+        self.randn_stds = stds
+        self.sampling_function = self.sample_covar_unif
+        self.normal_dist = torch.distributions.Normal(0,1)
+    
+    def sample_covar_unif(self, unif, sampling_params, param_loc=None, dynamic_window=False):
+        if unif.nelement() == 0:
+            return torch.zeros_like(unif).to(self.pruning_cfg.device)
+            
+        k, i = param_loc
+        parent_type, child_type = k.split("-", 1)
+
+        # shape: 1, circuit, n_head, past_layer, past_head
+        # shape: 1, circuit, n_head, past_layer
+        # shape: 1, past_layer, past_head
+        # shape: 1, past_layer
+        parent_params = self.signal_params[parent_type]
+        child_params = self.signal_params[child_type].unsqueeze(-1)
+        if parent_type == "attn":
+            parent_layers = unif.shape[-2]
+
+            # [attn_layers, n_heads]
+            parent_params = parent_params[:, :parent_layers]
+
+            # [child_heads, 1, 1] or [1, 1]
+            child_params = child_params.unsqueeze(-1)
+        else:
+            parent_layers = unif.shape[-1]
+            # [mlp_layers]
+            parent_params = parent_params[:, :parent_layers]
+
+            # [child_heads, 1] or [1, 1]
+        
+        if child_type == "attn":
+            parent_params = parent_params[:, None, None]
+            child_params = child_params[:, i].unsqueeze(1)
+        else:
+            child_params = child_params[:, i+1]
+        
+        # print(parent_params.shape)
+        # print(child_params.shape)
+
+        edge_params = self.randn_stds['edge'] * torch.randn_like(unif).to(self.pruning_cfg.device) + child_params + parent_params
+
+        total_std = math.sqrt(self.randn_stds[parent_type] ** 2 + self.randn_stds[child_type] ** 2 + self.randn_stds['edge'] ** 2)
+
+        probs = sampling_params[...,0].sigmoid().detach()
+        window_sz = self.temp_scale * probs * (1-probs)
+
+        # include wind-wsampled in 1s
+        mask_with_window = (edge_params < self.normal_dist.cdf(
+            (probs + window_sz / 2) / total_std
+        )) * 1.0
+        
+        # randomly sample some 1s to unif
+        mask_unif = (
+            torch.rand_like(unif).to(self.pruning_cfg.device) 
+            < (window_sz / (probs + window_sz / 2))
+        )
+
+        # if 1s are sampled to unif, then subtract unif and add a sampling params term
+        unif_mask = (
+            mask_with_window * (1 - (
+                unif + probs - sampling_params[...,0].sigmoid()
+            ) * mask_unif)
+        )
+        return unif_mask
+
+    def forward(self):
+        n_layers = self.pruning_cfg.n_layers
+        n_heads = self.pruning_cfg.n_heads
+        bsz = self.pruning_cfg.batch_size * self.pruning_cfg.n_samples
+        self.signal_params = {
+            "attn": self.randn_stds['attn'] * torch.randn((bsz, n_layers, n_heads)).to(self.pruning_cfg.device),
+            "mlp": self.randn_stds['mlp'] * torch.randn((bsz, n_layers + 2)).to(self.pruning_cfg.device)
+        }
+
+        return super().forward()
+        # torch.distributions.Normal.cdf()
+
 class EdgeMaskUnifWindowSampler(EdgeMaskUnifSampler):
     def __init__(self, pruning_cfg, node_reg=0, default_window=0.25):
         super().__init__(pruning_cfg, node_reg)

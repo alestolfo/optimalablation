@@ -102,17 +102,14 @@ def load_model_data(model_name, batch_size=8, ctx_length=25, repeats=True, ds_na
     model = HookedTransformer.from_pretrained(model_name, device=device)
     tokenizer = model.tokenizer
     print("Loading OWT...")
-    try:
-        if ds_name:
-            owt_loader = retrieve_owt_data(batch_size, ctx_length, tokenizer, ds_name=ds_name)
-        else:
-            owt_loader = retrieve_owt_data(batch_size, ctx_length, tokenizer)
-        if repeats:
-            owt_iter = cycle(owt_loader)
-        else:
-            owt_iter = owt_loader
-    except:
-        owt_iter = None
+    if ds_name:
+        owt_loader = retrieve_owt_data(batch_size, ctx_length, tokenizer, ds_name=ds_name)
+    else:
+        owt_loader = retrieve_owt_data(batch_size, ctx_length, tokenizer)
+    if repeats:
+        owt_iter = cycle(owt_loader)
+    else:
+        owt_iter = owt_loader
     return device, model, tokenizer, owt_iter
 
 # %%

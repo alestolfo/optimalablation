@@ -138,8 +138,6 @@ plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
 for model_name in all_models:
     print(model_name)
-    if model_name == "gpt2-large":
-        continue
 
     folders = {
         "modal": f"results/lens/{model_name}/oa",
@@ -157,6 +155,7 @@ for model_name in all_models:
     for k in vanilla_losses:
         if k not in lens_list:
             continue
+        i = 1
         # print(k)
         # print(list(vanilla_losses[f"{k}"]))
         sns.lineplot(list(vanilla_losses[f"{k}"]), color=colors[k], label=f"{ax_labels[k]}", linewidth=lw[i])
@@ -189,6 +188,33 @@ for model_name in all_models:
     # # get causal perturb losses
     # if not os.path.exists(f"{folders['linear_oa']}/causal_losses.p"):
     #     exp.get_causal_perturb_losses(lens_list, save=f"{folders['linear_oa']}/causal_losses.pth", pics_folder=folders['linear_oa'])
+
+# %%
+# lw = [2,1.5, 1,0.5,0.3,0.2,0.1]
+# model_name = "gpt2-large"
+# folders = {
+#     "modal": f"results/lens/{model_name}/oa",
+#     "linear_oa": f"results/lens/{model_name}/linear_oa",
+#     "tuned": f"results/lens/{model_name}/tuned",
+#     "grad": f"results/lens/{model_name}/grad"
+# }
+# f = plt.subplots(figsize=(15,15))
+# for i, ctx_length in enumerate([5,10,15,35,50,75,100]):
+#     vanilla_losses = torch.load(f"{folders['linear_oa']}/orig_general_{ctx_length}.pth")
+#     for k in vanilla_losses:
+#         if k not in lens_list:
+#             continue
+#         # print(k)
+#         # print(list(vanilla_losses[f"{k}"]))
+#         sns.lineplot(list(vanilla_losses[f"{k}"]), color=get_shades(k)[i], label=f"{ax_labels[k]}_{ctx_length}", linewidth=lw[i])
+#         # plt.show()
+
+# plt.ylim(-0.2,5.3)
+# plt.xlabel("Layer number")
+# plt.ylabel("KL-divergence")ß
+# plt.suptitle(f"Lens loss generalization, {model_name}")
+# plt.tight_layout()
+# plt.savefig(f"{plot_folder}/overall-{model_name}-{ctx_length}.png")
 
 # %%
 def load_plots(folders, lens_list, title, resample=False, offset=0, loop=False, lw=None, prev_fig=None, prev_axes=None):

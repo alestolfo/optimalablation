@@ -11,10 +11,12 @@ from torch.utils.data import DataLoader, random_split
 
 # %%
 
-def retrieve_owt_data(batch_size, ctx_length, tokenizer, split="train", from_saved=False, ds_name="Elriggs/openwebtext-100k", ds_folder="utils/datasets/owt"):
-    ds_path = f"{ds_folder}/{ds_name}.hf"
+def retrieve_owt_data(batch_size, ctx_length, tokenizer, split="train", from_saved=False, ds_name="Elriggs/openwebtext-100k", ds_folder="utils/datasets/owt", default_seq_len=25):
+    ds_path = f"{ds_folder}/{ds_name}_{ctx_length}.hf"
     if not os.path.exists(ds_path):
         dataset = datasets.load_dataset(ds_name, split="train")
+        if ctx_length != default_seq_len:
+            dataset = dataset.select(range(10000))
         tokens_dataset = tokenize_and_concatenate(dataset, tokenizer, streaming=False, max_length=ctx_length, column_name="text", add_bos_token=True, num_proc=4)
         tokens_dataset.save_to_disk(ds_path)
     else:

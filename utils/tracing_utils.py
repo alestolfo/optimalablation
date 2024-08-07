@@ -8,9 +8,16 @@ mlp_out_filter = lambda layer_no, name: name == f"blocks.{layer_no}.hook_mlp_out
 def replace_subject_tokens(bsz, subject_token_pos, null_token, act, hook):
     act = act.unflatten(0, (-1, bsz))
 
-    # first is clean
-    for j in range(null_token.shape[0]):
-        act[j+1, subject_token_pos[:,0], subject_token_pos[:,1]] = null_token[j].clone()
+    # diff null tokens for each
+    if null_token.shape[0] > 1:
+        # first is clean
+        for j in range(null_token.shape[0]):
+            act[j+1, subject_token_pos[:,0], subject_token_pos[:,1]] = null_token[j].clone()
+    
+    # same null token for everything
+    else:
+        for j in range(1, act.shape[0]):
+            act[j, subject_token_pos[:,0], subject_token_pos[:,1]] = null_token.clone()
     
     return act.flatten(start_dim=0, end_dim=1)
 
@@ -99,9 +106,7 @@ def get_subject_tokens(batch, tokenizer, mode="fact"):
 
     return tokens['input_ids'], subject_tokens
 
-def ct_inference(model, tokens, subject_pos, device, causal_layers, null_token, token_type, node_type, window_size, gauss=False):
-    bsz = tokens.shape[0]
-
+def get_patch_token_pos(tokens, subject_pos, device, token_type):
     if token_type == "last":
         patch_token_pos = None
     elif token_type == "last_subject":
@@ -111,6 +116,13 @@ def ct_inference(model, tokens, subject_pos, device, causal_layers, null_token, 
         patch_token_pos = torch.stack([torch.arange(mask.shape[0]).to(device), last_subject_pos], dim=-1)
     elif token_type == "all_subject":
         patch_token_pos = subject_pos
+    
+    return patch_token_pos
+
+def ct_inference(model, tokens, subject_pos, device, causal_layers, null_token, token_type, node_type, window_size, gauss=False):
+    bsz = tokens.shape[0]
+
+    patch_token_pos = get_patch_token_pos(tokens, subject_pos, device, token_type)
     
     tokens = tokens.repeat(len(causal_layers) + 2, 1)
 
@@ -151,3 +163,29 @@ def ct_inference(model, tokens, subject_pos, device, causal_layers, null_token, 
     layer_probs = (layer_results * target_mask).sum(dim=-1)
 
     return target_probs, layer_probs
+
+def ct_inference_coherence(model, tokens, subject_pos, null_token, ablate_type,  n_samples_per_prompt=5, completion_tokens=10):
+    bsz = tokens.shape[0]
+    orig_length = tokens.shape[1]
+
+    tokens = tokens.repeat(n_samples_per_prompt + 1, 1)
+
+    for i in range(completion_tokens):
+        result = model.run_with_hooks(
+            tokens,
+            fwd_hooks = [] if ablate_type is None else [
+                # pass stds instead of null token. If gauss, then "null_token" represent stds
+                ("hook_embed", partial(gauss_subject_tokens, bsz, subject_pos, null_token) if ablate_type == "gauss" 
+                else partial(replace_subject_tokens, bsz, subject_pos, null_token)),
+            ]
+        )[:,-1].softmax(dim=-1)
+        
+        next_token = result.multinomial(num_samples=1)
+        tokens = torch.cat((tokens, next_token), dim=-1)
+    
+    # first one is unablated
+    tokens = tokens.unflatten(0, (-1, bsz))[1:].flatten(start_dim=0, end_dim=1)
+    return tokens[:, :orig_length], tokens[:, orig_length:]
+    
+
+        
