@@ -192,23 +192,6 @@ for window_size, token_type in settings_list:
                 **{k: aie_means[k] for k in range(aie_means.shape[0])}
             })
 
-            # bar_cont = plt.bar(
-            #     np.arange(aie_means.shape[0]) + (0.15 if ablate_type=="oa" else -0.15), 
-            #     aie_means,
-            #     0.3, 
-            #     label=labels[ablate_type], 
-            #     color=colors[ablate_type]
-            # )
-
-            # sample_size = clean_probs.shape[0] * clean_probs.shape[-1]
-            # bounds = agg_clean_mean / (agg_clean_mean - baseline)
-            # hoeffding = bounds * math.sqrt(math.log(2/0.05) / (2 * sample_size))
-            # print(hoeffding)
-            # line = plt.axhline(y=hoeffding,color=colors[ablate_type], linestyle=":")
-
-        # axes[i].set_yscale('function', functions=(lambda x: np.copysign(np.abs(x) ** (3. / 5), x), lambda x: np.copysign(np.abs(x) ** (5. / 3), x)))
-        # axes[i].set_ylim(-0.2, 1)
-
         axes[i].set(xlabel="Layer number", ylabel="AIE")
         axes[i].set_title(f"AIE, {node_types[node_type]} layers")
         axes[i].legend()
@@ -231,58 +214,3 @@ print(agg_clean_mean)
 print(corrupted_means)
 pd.set_option("display.max_columns", 100)
 pd.DataFrame(df)
-# %%
-
-
-
-# sns.scatterplot(x=corrupted_probs.flatten().cpu(), y=clean_probs.flatten().cpu(), s=5)
-# # %%
-# sns.scatterplot(x=corrupted_probs.flatten().cpu(), y=aie.mean(dim=-1).flatten().cpu(), s=5)
-# sns.lineplot(x=[0,1],y=[0,1])
-
-# # %%
-# sns.scatterplot(x=clean_probs.flatten().cpu(), y=aie.mean(dim=-1).flatten().cpu(), s=5)
-# sns.lineplot(x=[0,1],y=[0,1])
-
-# # %%
-
-# sns.lineplot((aie - corrupted_probs.unsqueeze(-1)).std(dim=[0,1,2]).cpu(), label="corr_std")
-# sns.lineplot((aie - clean_probs.unsqueeze(-1)).std(dim=[0,1,2]).cpu(), label="clean_std")
-# sns.lineplot(aie.std(dim=[0,1,2]).cpu(), label="clean_std")
-
-# %%
-    # # lcb = sns.lineplot(aie_means - 1.96 * aie_stds / math.sqrt(n_samples), color=ax[0].get_facecolor())
-    # # ucb = sns.lineplot(aie_means + 1.96 * aie_stds / math.sqrt(n_samples), color=ax[0].get_facecolor())
-    # ax = sns.lineplot(x=[0, len(aie_means)], y=[0, 0], color="black")
-    # # for i, t in enumerate(ax.get_xticklabels()):
-    # #     if (i % 5) != 0:
-    # #         t.set_visible(False)
-
-
-
-# target probs: [batch]. [10,]
-# corrupted probs: [batch, layers]
-    #         aie = torch.load(f"{folder}/aie.pth")
-    #         corrupted_probs = torch.load(f"{folder}/{s1}/{s3}_{s2}_corrupted_probs.pth")
-
-    #         corrupted_probs = corrupted_probs[test_start:]
-
-    #         aie_means = []
-    #         aie_stds = []
-    #         n_samples = aie[0].nelement()
-    #         for i in range(len(aie)):
-    #             aie[i] = aie[i][test_start:]
-    #             aie_means.append(aie[i].mean().item() - corrupted_probs.mean().item())
-    #             aie_stds.append(aie[i].std().item())
-    #         print(labels[s2])
-    #         intv = np.arange(len(aie_means))
-    #         aie_means = np.array(aie_means)
-    #         aie_stds = np.array(aie_stds)
-
-    #         width = 0.5
-    # break
-        
-
-# %%
-sns.histplot(all_corrupted_means['oa'])
-# %%
