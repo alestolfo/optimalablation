@@ -330,7 +330,7 @@ for n_demos in demo_plot:
             ylabel="OCA lens"
         )
 
-    plt.suptitle(f"Maximum accuracy improvement over full model")
+    plt.suptitle(f"Elicitation accuracy boost comparison")
     plt.tight_layout()
     plt.savefig(f"{out_folder}/scatter.png")
     plt.show()
