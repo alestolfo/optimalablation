@@ -200,13 +200,13 @@ def plot_figure(data, dataset_name, demos, string_labels=False):
                 sns.lineplot(
                     x=np.arange(yvals.shape[0]),
                     y=yvals,
-                    label=f"{label_mode}, {lens_captions[lens_name]} lens",
+                    label=f"{label_mode}, {lens_captions[lens_name]} lens".replace("labels", "demos").replace("Permuted", "False"),
                     ax=axes[ax_idx],
                     color=lineshades[label_mode][j],
                     linestyle="solid" if lens_name == "tuned" else "dashed",
                     alpha=0.7
                 )
-            axes[ax_idx].axhline(y=data[n_demos][label_mode]['modal'][-1], color="black" if label_mode == "True labels" else "red", linestyle="dotted", label=f"{label_mode}, model accuracy")
+            axes[ax_idx].axhline(y=data[n_demos][label_mode]['modal'][-1], color="black" if label_mode == "True labels" else "red", linestyle="dotted", label=f"{label_mode}, model accuracy".replace("labels", "demos").replace("Permuted", "False"))
         axes[ax_idx].set(ylabel="Calibrated accuracy", xlabel="Layer number")
         axes[ax_idx].set_title(n_demos if string_labels else f"{n_demos} demos")
         axes[ax_idx].get_legend().remove()
@@ -408,7 +408,7 @@ for ax_idx, dataset_name in enumerate(agg_data):
             sns.lineplot(
                 x=np.arange(yvals.shape[0]),
                 y=yvals,
-                label=f"{label_mode}\n {lens_captions[lens_name]} lens",
+                label=f"{label_mode}\n {lens_captions[lens_name]} lens".replace("labels", "demos").replace("Permuted", "False"),
                 color=lineshades[label_mode][j],
                 linestyle="solid" if lens_name == "tuned" else "dashed",
                 alpha=0.7
