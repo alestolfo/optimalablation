@@ -163,7 +163,7 @@ for model_name in all_models:
         plt.ylim(-0.2,5.3)
         plt.xlabel("Layer number")
         plt.ylabel("KL-divergence")
-        plt.suptitle(f"Lens loss, {mn}")
+        plt.suptitle(f"Lens loss, {mn.replace('gpt', 'GPT-')}")
         plt.tight_layout()
         plt.savefig(f"{plot_folder}/overall-{mn}.png")
     continue
