@@ -203,14 +203,15 @@ def plot_figure(data, dataset_name, demos, string_labels=False):
                     label=f"{label_mode}, {lens_captions[lens_name]} lens",
                     ax=axes[ax_idx],
                     color=lineshades[label_mode][j],
-                    linestyle="solid",
+                    linestyle="solid" if lens_name == "tuned" else "dashed",
                     alpha=0.7
                 )
+            axes[ax_idx].axhline(y=data[n_demos][label_mode]['modal'][-1], color="black" if label_mode == "True labels" else "red", linestyle="dotted", label=f"{label_mode}, model accuracy")
         axes[ax_idx].set(ylabel="Calibrated accuracy", xlabel="Layer number")
         axes[ax_idx].set_title(n_demos if string_labels else f"{n_demos} demos")
         axes[ax_idx].get_legend().remove()
     
-    axes[-1].legend(bbox_to_anchor=(1.05, 0.7))
+    axes[-1].legend(bbox_to_anchor=(1.05, 0.9))
 
     plt.suptitle(f"Elicitation accuracy on {dataset_name.replace('_', ' ')}, GPT-2-XL")
     plt.tight_layout()
@@ -283,7 +284,7 @@ for n_demos in demo_plot:
             x=comparative_stats_plot[n_demos][label_mode]['tuned'], 
             y=comparative_stats_plot[n_demos][label_mode]['modal'],
             # label=label_mode,
-            color=lineshades[label_mode][-1],
+            color=lineshades[label_mode][0],
         )
 
         data_series = list(zip(
@@ -412,6 +413,9 @@ for ax_idx, dataset_name in enumerate(agg_data):
                 linestyle="solid" if lens_name == "tuned" else "dashed",
                 alpha=0.7
             )
+        baseline = agg_data[dataset_name][n_demos][label_mode]["modal"][-1]
+        plt.gca().axhline(y=baseline, color="black" if label_mode == "True labels" else "red", linestyle="dotted")
+
     # plt.gca().set(ylabel="Accuracy", xlabel="Layer number")
     plt.gca().set_title(dataset_name.replace("_", " ").replace(" pairs", "").replace(" stance", ""))
     plt.gca().get_legend().remove()
