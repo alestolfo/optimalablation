@@ -17,7 +17,6 @@ from utils.circuit_utils import prune_dangling_edges, discretize_mask
 class ConstantMaskSampler():
     def __init__(self):
         self.sampled_mask = None
-        self.use_temperature = False
         self.log_columns = []
 
     def set_mask(self, mask):
@@ -35,20 +34,18 @@ class MaskSampler(torch.nn.Module):
 
         self.complexity_mean = complexity_mean
         self.pruning_cfg = pruning_cfg
-        self.log_columns = ['complexity_loss', 'temp', 'temp_cond', 'temp_count', 'temp_reg']
+        self.log_columns = ['complexity_loss']
 
         self.sampling_params = torch.nn.ParameterDict({
             k: torch.nn.ParameterList([
                 torch.nn.Parameter(p_init) for p_init in pruning_cfg.init_params[k]
             ]) for k in pruning_cfg.init_params
         })
-
+        
         self.fix_mask = False
         self.sampled_mask = None
-        self.use_temperature = True
-        self.temp_c = 0
         self.node_reg = 0
-        self.def_value = 2/3
+        self.default_temp = 2/3
         self.sampling_function = self.sample_hard_concrete
 
         self.normalize_empirical_mask = False
@@ -64,7 +61,9 @@ class MaskSampler(torch.nn.Module):
     def sample_hard_concrete(self, unif, sampling_params, param_loc=None):
         # back prop against log alpha
         endpts = self.pruning_cfg.hard_concrete_endpoints
-        concrete = (((.001+unif).log() - (1-unif).log() + sampling_params[...,0])/(sampling_params[...,1].relu()+.001)).sigmoid()
+        betas = sampling_params[...,1].relu() + 1e-3
+
+        concrete = (((1e-3 + unif).log() - (1-unif).log() + sampling_params[...,0]) / betas).sigmoid()
 
         hard_concrete = ((concrete + endpts[0]) * (endpts[1] - endpts[0])).clamp(0,1)
 
@@ -113,14 +112,13 @@ class MaskSampler(torch.nn.Module):
                 print("NANs", nancount)
                 for k in self.sampling_params:
                     for ts in self.sampling_params[k]:
-                        ts[ts[:,1].isnan().nonzero()[:,0],-1] = self.def_value
+                        ts[ts[:,1].isnan().nonzero()[:,0],-1] = self.default_temp
+                        if ts.shape[-1] == 2:
+                            ts[...,1].detach().clamp_(0,1)
                         if ts.isnan().sum() > 0:
                             fixed = False
         return fixed
     
-    def set_temp_c(self, temp_c):
-        self.temp_c = temp_c
-
     # beta and alpha should be same shape as x, or broadcastable
     # def f_concrete(x, beta, alpha):
     #     return ((x.log() - (1-x).log()) * beta - alpha.log()).sigmoid()
@@ -134,26 +132,13 @@ class MaskSampler(torch.nn.Module):
         # alphas already logged
         complexity_loss = self.complexity_loss(all_sampling_params)
                     
-        temperature_loss = all_sampling_params[...,1].square()
-
-        mask_loss = self.pruning_cfg.lamb * complexity_loss.sum() + self.temp_c * temperature_loss.sum()
+        mask_loss = self.pruning_cfg.lamb * complexity_loss.sum() 
 
         with torch.no_grad():
-            avg_temp = all_sampling_params[...,1].relu().mean().item()
-            temp_cond = torch.nan_to_num((all_sampling_params[...,1]-1).relu().sum() / (all_sampling_params[...,1] > 1).sum(), nan=0, posinf=0, neginf=0).item() + 1
-            temp_count = (2*all_sampling_params[:,1].relu().sigmoid()-1).mean().item()
-
             print("Complexity:", complexity_loss.sum().item(), "out of", complexity_loss.nelement())
-            print("Avg temperature", avg_temp)
-            print("Avg temp > 1", temp_cond)
-            print("Temp count", temp_count)
 
         mask_details = {                
             "complexity_loss": complexity_loss.mean().item() if self.complexity_mean else complexity_loss.sum().item(),
-            "temp": avg_temp,
-            "temp_cond": temp_cond,
-            "temp_count": temp_count,
-            "temp_reg": self.temp_c
         }
         return mask_loss, mask_details
     

@@ -150,8 +150,6 @@ class Pruner(torch.nn.Module):
 
         n_samples = self.pruning_cfg.n_samples
         
-        if self.mask_sampler.use_temperature:
-            self.mask_sampler.set_temp_c(self.pruning_cfg.temp_scheduler(self.log))
         mask_loss, mask_details = self.mask_sampler()
 
         if timing:

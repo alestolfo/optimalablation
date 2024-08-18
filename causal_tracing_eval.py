@@ -186,3 +186,39 @@ for ablate_type in coherence_evals:
     coherence_evals[ablate_type] = pd.DataFrame(coherence_evals[ablate_type])
     coherence_evals[ablate_type].to_csv(f"{base_folder}/coherence-results-{ablate_type}.csv")
 # %%
+
+for ablate_type in [None, "oa", "gauss"]:
+    coherence_csv = pd.read_csv(f"{base_folder}/coherence-results-{ablate_type}.csv")
+
+# %%
+
+
+COHERENCE_PROMPT = """
+Attached is a csv file with prompts about facts, each with a candidate completion.
+
+Please fill in two more columns of the csv. The first column is "coherence": whether the completion forms a coherent English sentence. Please note that there may additional words or the start of a sentence in the completion. You are only to rate the coherence of the sentence being completed, and may ignore everything after the end of that sentence. Note that you are only checking if the sentence forms a coherent idea and not whether the completion is correct.
+
+Here are a few examples: 
+Prompt: "The capital of France is"
+Completion: "Paris." Coherence rating: 1
+Completion: "Moscow. bug fire abbasksd" Coherence rating: 1
+Completion: "a place that has two million people." Coherence rating: 1
+Completion: "beets that are red. Paris is a great city." Coherence rating: 0
+
+Prompt: "Mohammed follows the religion of"
+Completion: "Judaism." Coherence rating: 1
+Completion: "his mother." Coherence rating: 1
+
+The second column is "category": whether the completion includes an answer of the correct category. The factual prompts are asking for a specific type of answer, and you should evaluate whether the completed answer is a member of the correct class. Remember, you are not rating whether the answer is correct, only whether it presents a direct answer to the prompt.
+
+Here are a few examples: 
+Prompt: "The capital of France is"
+Completion: "Paris." Category rating: 1
+Completion: "Moscow. bug fire abbasksd" Category rating: 1
+Completion: "a place that has two million people." Category rating: 0
+Completion: "beets that are red. Paris is a great city." Category rating: 0
+
+Prompt: "Mohammed follows the religion of"
+Completion: "Judaism." Coherence rating: 1
+Completion: "his mother." Coherence rating: 0
+"""

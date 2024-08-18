@@ -42,16 +42,6 @@ class InferenceConfig:
             self.layers_to_prune.append(("attn", layer_no))
             self.layers_to_prune.append(("mlp", layer_no))
         self.layers_to_prune.append(("mlp", self.n_layers))
-
-        self.temp_min_reg = 0.001
-        self.temp_adj_intv = 10
-        self.temp_avg_intv = 20
-        self.temp_comp_intv = 200
-        self.temp_convergence_target = 2000
-        self.temp_c = 0
-
-        self.temp_momentum = 0
-
         self.constant_prune_mask = constant_prune_mask
     
     def initialize_params(self, init_param, init_scale=None, use_temp=False):
@@ -71,46 +61,6 @@ class InferenceConfig:
 
                 self.init_params[k].append(param)
 
-    def reset_temp(self):
-        self.temp_c = 0
-
-    def temp_scheduler(self, log):
-        avg_intv = self.temp_avg_intv
-        comp_intv = self.temp_comp_intv
-        if log.t % self.temp_adj_intv != 0:
-            return self.temp_c
-        
-        # how many % did the temperature loss decline
-        g = log.stat_sig_growth("temp_cond", avg_intv, comp_intv)
-        if log.t - log.last_tick < max(20, 1.5 * comp_intv) or g == False:
-            return 0            
-        cur_temp = np.mean(log.stat_book["temp_cond"][-20:])
-        decline_rate, growth_rate = g
-        time_left = max(self.temp_convergence_target - (log.t - log.last_tick), 50)
-        target_decline_rate = 1-np.exp(
-            (-1 * np.log(cur_temp)) / (time_left / comp_intv))
-        
-        self.temp_c = max(self.temp_c, self.temp_min_reg)
-
-        if growth_rate > 0:
-            self.temp_momentum += 1
-            if self.temp_momentum * self.temp_adj_intv > time_left // 10:
-                self.temp_c *= 1.05
-        elif cur_temp < 1.01:
-            self.temp_c *= 0.95
-        else:
-            self.temp_momentum = max(0, self.temp_momentum - 1)
-            if self.temp_momentum > 0:
-                self.temp_c *= 0.95
-            elif decline_rate <= 0.001:
-                self.temp_c *= 1.05
-            elif decline_rate > target_decline_rate:
-                self.temp_momentum = 0
-                self.temp_c *= max(1 + (target_decline_rate / decline_rate - 1) / 3, 0.5)            
-            else:
-                self.temp_c *= min(1 + (target_decline_rate / decline_rate - 1) / 10, 1.5)   
-        return self.temp_c
-
     def take_snapshot(self, component_pruner, lp_count, sampling_optimizer, modal_optimizer, j):
         snapshot_path = f"{self.folder}/snapshot{j}.pth"
         metadata_path = f"{self.folder}/metadata{j}.pkl"
@@ -121,9 +71,6 @@ class InferenceConfig:
         if 'node_loss' in component_pruner.log.stat_book:
             plot_1.append('node_loss')
         component_pruner.log.plot(plot_1, save=f"{self.folder}/train-loss{j}.png")
-
-        if 'temp' in component_pruner.log.stat_book:
-            component_pruner.log.plot(['temp', 'temp_cond', 'temp_count', 'temp_reg'], save=f"{self.folder}/train-temp{j}.png")
 
         snapshot_dict = {'sampling_optim_dict': sampling_optimizer.state_dict()}
         pruner_dict = component_pruner.state_dict()
@@ -139,7 +86,7 @@ class InferenceConfig:
         torch.save(snapshot_dict, snapshot_path)
 
         with open(metadata_path, "wb") as f:
-            pickle.dump((component_pruner.log, lp_count, (self.temp_c, self.temp_momentum)), f)
+            pickle.dump((component_pruner.log, lp_count), f)
         
         component_pruner.mask_sampler.take_snapshot(j)
 
@@ -167,9 +114,6 @@ class InferenceConfig:
                 x = pickle.load(f)
                 main_log = x[0]
                 lp_count = x[1]
-                if len(x) == 3:
-                    self.temp_c = x[2][0]
-                    self.temp_momentum = x[2][1]
                 
             component_pruner.set_log(main_log)
             component_pruner.mask_sampler.load_snapshot()

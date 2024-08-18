@@ -11,7 +11,7 @@ else
 CONSTRAINT='#SBATCH --constraint="a100"'
 fi
 
-for ablationtype in "mean" "mean_agnostic" "resample_agnostic" "oa"
+for ablationtype in "mean" "cf" "resample" "oa"
 do
 
 sbatch <<EOT

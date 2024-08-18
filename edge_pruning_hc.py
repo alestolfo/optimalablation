@@ -94,6 +94,7 @@ else:
     if ablation_type == "mean":
         edge_pruner.modal_attention.requires_grad = False
         edge_pruner.modal_mlp.requires_grad = False
+
 # %%
 
 lp_count = pruning_cfg.load_snapshot(edge_pruner, sampling_optimizer, modal_optimizer, gpu_requeue, pretrained_folder=None)

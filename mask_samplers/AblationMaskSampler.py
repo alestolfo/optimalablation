@@ -18,7 +18,6 @@ class SingleComponentMaskSampler(torch.nn.Module):
     def __init__(self, pruning_cfg):
         super().__init__()
 
-        self.use_temperature = False
         self.log_columns = []
 
         self.n_components = torch.cat([ts.flatten() for k in pruning_cfg.init_params for ts in pruning_cfg.init_params[k]], dim=0).shape[0]
@@ -54,7 +53,6 @@ class MultiComponentMaskSampler(torch.nn.Module):
         
         self.sampled_mask = None
 
-        self.use_temperature = False
         self.log_columns = []
 
         self.pruning_cfg = pruning_cfg

@@ -366,9 +366,80 @@ class LensExperiment():
         return (target_probs, orig_probs, [a[0] for a in activation_storage], 
                 [a[1] for a in activation_storage], perturb_loss, attention_storage if resample_hook else None)
 
+    def apply_lens_layer(self, lens_name, activations, layer):
+        lens_weights = self.all_lens_weights[lens_name][layer]
+        lens_bias = self.all_lens_bias[lens_name][layer]
+        
+        linear_lens_output = einsum("result activation, batch activation -> batch result", lens_weights, activations) + lens_bias
+        linear_lens_output = self.model.ln_final(linear_lens_output.unsqueeze(1))
+        linear_lens_probs = self.model.unembed(linear_lens_output).log_softmax(dim=-1).squeeze(1)
+        return linear_lens_probs
+
+    # # returns LOGGED probs
+    # def apply_modal_lens_layer(self, lens_name, activations, layer, shared_bias=False, attention_storage=None):
+    #     if lens_name == "resample":
+    #         permutation = gen_resample_perm(activations.shape[0]).to(self.device)
+    #     else:
+    #         attn_bias = self.all_lens_bias[lens_name]
+
+    #     resid = activations
+    #     for layer_no in range(layer, self.model.cfg.n_layers):
+    #         # no shared_bias: [layer_no+1, d_model]
+
+    #         if lens_name == "resample":
+    #             resid_mid = resid + attention_storage[permutation]
+    #         else:
+    #             attn_bias_layer = attn_bias[layer_no]
+    #             if shared_bias:
+    #                 # shared_bias: [d_model,]
+    #                 attn_bias_layer = attn_bias_layer.unsqueeze(0)
+
+    #             resid_mid = resid + attn_bias_layer.unsqueeze(1)
+            
+    #         normalized_resid_mid = self.model.blocks[layer_no].ln2(resid_mid)
+    #         mlp_out = self.model.blocks[layer_no].mlp(normalized_resid_mid)
+    #         resid = resid_mid + mlp_out
+        
+    #     # [n_layers, batch, d_model]
+    #     resid = self.model.ln_final(resid)
+
+    #     modal_lens_probs = self.model.unembed(resid)
+
+    #     # [batch, n_layers, d_vocab]
+    #     modal_lens_probs = modal_lens_probs.log_softmax(dim=-1).permute((1,0,2))
+    #     return modal_lens_probs
+
+    # def get_lens_continuations(self, batch, layer, lens="modal", completion_tokens=10):
+    #     orig_length = batch.shape[1]
+        
+    #     for i in range(completion_tokens):
+    #         activation_storage = []
+    #         attention_storage = []
+
+    #         self.model.run_with_hooks(
+    #             batch,
+    #             fwd_hooks=[
+    #                     (partial(resid_points_filter, layer), 
+    #                     partial(save_hook_last_token, activation_storage)),
+    #                 ],
+    #             stop_at_layer=layer
+    #         )
+
+    #         if lens == "modal" or lens == "mean":
+    #             lens_probs = self.apply_modal_lens_layer(lens, activation_storage, self.shared_bias or lens == "mean")
+    #         elif lens == "resample":
+    #             lens_probs = self.apply_modal_lens_layer(lens, activation_storage, attention_storage=attention_storage)
+    #         else:
+    #             lens_probs = self.apply_lens(lens, activation_storage)
+            
+    #         next_tokens = lens_probs[:,layer].exp().multinomial(num_samples=1)
+    #         batch = torch.cat((batch, next_tokens), dim=-1)
+        
+    #     return batch[:, orig_length:], batch[:, orig_length:]
+
     # perturb_type: ["fixed", "project", False]
     # supported_lens = ["tuned", "linear_oa", "grad", "modal"]
-    def get_lens_loss(self, batch, lens_list=["modal", "tuned"], std=0, perturb_type=False, causal_loss=False):
+    def get_lens_loss(self, batch, lens_list=["modal", "tuned"], std=0, perturb_type=False, causal_loss=False, return_probs=False, token_positions=None):
 
         n_layers = self.model.cfg.n_layers
 
@@ -386,7 +457,7 @@ class LensExperiment():
                 batch,
                 fwd_hooks=[
                         *[(partial(resid_points_filter, layer_no), 
-                        partial(save_hook_last_token, activation_storage)) 
+                        partial(save_hook_last_token, activation_storage, token_positions=token_positions)) 
                         for layer_no in range(n_layers)],
 
                         # we also need to save attentions for resample
@@ -404,7 +475,9 @@ class LensExperiment():
             else:
                 lens_probs = self.apply_lens(k, activation_storage)
 
-            if perturb_type:
+            if return_probs:
+                output_losses[k] = lens_probs.exp()
+            elif perturb_type:
                 if k == "modal" or k == "mean":
                     orig_lens_probs = self.apply_modal_lens(k, orig_acts, self.shared_bias or k == "mean")
                 elif k == "resample":
@@ -445,8 +518,8 @@ class LensExperiment():
         lens_losses_dfs = compile_loss_dfs(all_losses, lens_losses_dfs)
         # corr_plot(lens_losses_dfs["modal"], lens_losses_dfs["tuned"], "modal", "tuned")
         # corr_plot(lens_losses_dfs["modal"], lens_losses_dfs["linear_oa"], "modal", "linear_oa")
-        corr_plot(lens_losses_dfs["linear_oa"], lens_losses_dfs["tuned"], "linear_oa", "tuned", self.model.cfg.n_layers)
-        overall_comp(lens_losses_dfs, title="Lens losses", save=None if pics_folder is None else f"{pics_folder}/original.png")
+        # corr_plot(lens_losses_dfs["linear_oa"], lens_losses_dfs["tuned"], "linear_oa", "tuned", self.model.cfg.n_layers)
+        # overall_comp(lens_losses_dfs, title="Lens losses", save=None if pics_folder is None else f"{pics_folder}/original.png")
 
         means_dfs = {}
         for k in lens_losses_dfs:

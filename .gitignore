@@ -1,3 +1,4 @@
 results/*
 prog_files/*
 *.pyc
+utils/datasets/owt/*

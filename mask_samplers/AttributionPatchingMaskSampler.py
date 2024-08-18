@@ -17,7 +17,6 @@ class AttributionPatchingMaskSampler(torch.nn.Module):
     def __init__(self, pruning_cfg):
         super().__init__()
 
-        self.use_temperature = False
         self.log_columns = []
 
         n_layers = pruning_cfg.n_layers

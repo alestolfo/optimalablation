@@ -125,8 +125,11 @@ def gen_resample_perm(n):
     
     return permutation
 
-def save_hook_last_token(save_to, act, hook):
-    save_to.append(act[:,-1,:])
+def save_hook_last_token(save_to, act, hook, token_positions=None):
+    if token_positions:
+        save_to.append(act[:,token_positions,:].squeeze(0))
+    else:
+        save_to.append(act[:,-1,:])
 
 def save_hook_last_token_bsz(bsz, save_to, act, hook):
     save_to.append(act[:bsz,-1,:])
