@@ -177,12 +177,12 @@ lineshades = {'True labels': blue_shades, 'Permuted labels': red_shades}
 
 def plot_figure(data, dataset_name, demos, string_labels=False):
     CORR_SIZE = 20
-    SMALL_SIZE = 20
+    SMALL_SIZE = 18
     MEDIUM_SIZE = 20
-    BIGGER_SIZE = 32
+    BIGGER_SIZE = 24
 
     plt.rc('font', size=SMALL_SIZE)          # controls default text sizes
-    plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
+    plt.rc('axes', titlesize=MEDIUM_SIZE)     # fontsize of the axes title
     plt.rc('axes', labelsize=MEDIUM_SIZE)    # fontsize of the x and y labels
     plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
     plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
