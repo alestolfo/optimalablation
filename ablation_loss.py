@@ -26,7 +26,6 @@ model_name = "gpt2-small"
 owt_batch_size = 10
 device, model, tokenizer, owt_iter = load_model_data(model_name, owt_batch_size)
 model.eval()
-# model.cfg.use_attn_result = True
 n_layers = model.cfg.n_layers
 n_heads = model.cfg.n_heads
 
@@ -46,7 +45,6 @@ if ablation_type.startswith("oa"):
         pruning_cfg.batch_size = 3
         oa_train = True
 
-# fix_prompt: only resample from the same prompt
 task_ds = get_task_ds(dataset, pruning_cfg.batch_size, device, ablation_type)
 
 for param in model.parameters():

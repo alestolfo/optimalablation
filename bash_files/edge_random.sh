@@ -50,10 +50,4 @@ python3 circuits_random.py -d $DATASET -e $ABLATION --minwindow $MINW --maxwindo
 
 EOT
 
-# if $COMMAND1; then
-#     $COMMAND2
-# else
-#     echo "failure so did not run post training"
-# fi
-
 done
