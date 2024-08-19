@@ -176,10 +176,10 @@ red_shades = plt.cm.Reds(np.linspace( 0.8, 0.5, 2))
 lineshades = {'True labels': blue_shades, 'Permuted labels': red_shades}
 
 def plot_figure(data, dataset_name, demos, string_labels=False):
-    CORR_SIZE = 16
-    SMALL_SIZE = 18
+    CORR_SIZE = 20
+    SMALL_SIZE = 20
     MEDIUM_SIZE = 20
-    BIGGER_SIZE = 24
+    BIGGER_SIZE = 32
 
     plt.rc('font', size=SMALL_SIZE)          # controls default text sizes
     plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
@@ -189,8 +189,8 @@ def plot_figure(data, dataset_name, demos, string_labels=False):
     plt.rc('legend', fontsize=CORR_SIZE)    # legend fontsize
     plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
 
-    fig, axes = plt.subplots(1,3,figsize=(18,5))
-    lens_captions = {'modal': "OCA", 'tuned': "tuned"}
+    fig, axes = plt.subplots(1,3,figsize=(17,5))
+    lens_captions = {'modal': "OCA", 'tuned': "Tuned"}
 
     for ax_idx, n_demos in enumerate(demos):
         for label_mode in label_modes:
@@ -200,18 +200,19 @@ def plot_figure(data, dataset_name, demos, string_labels=False):
                 sns.lineplot(
                     x=np.arange(yvals.shape[0]),
                     y=yvals,
-                    label=f"{label_mode}, {lens_captions[lens_name]} lens".replace("labels", "demos").replace("Permuted", "False"),
+                    label=f"{label_mode}, {lens_captions[lens_name]}".replace("labels", "demos").replace("Permuted", "False"),
                     ax=axes[ax_idx],
                     color=lineshades[label_mode][j],
                     linestyle="solid" if lens_name == "tuned" else "dashed",
                     alpha=0.7
                 )
-            axes[ax_idx].axhline(y=data[n_demos][label_mode]['modal'][-1], color="black" if label_mode == "True labels" else "red", linestyle="dotted", label=f"{label_mode}, model accuracy".replace("labels", "demos").replace("Permuted", "False"))
-        axes[ax_idx].set(ylabel="Calibrated accuracy", xlabel="Layer number")
+            axes[ax_idx].axhline(y=data[n_demos][label_mode]['modal'][-1], color="black" if label_mode == "True labels" else "red", linestyle="dotted", label=f"{label_mode},\n full model".replace("labels", "demos").replace("Permuted", "False"))
+        axes[ax_idx].set(xlabel="Layer number")
         axes[ax_idx].set_title(n_demos if string_labels else f"{n_demos} demos")
         axes[ax_idx].get_legend().remove()
-    
-    axes[-1].legend(bbox_to_anchor=(1.05, 0.9))
+
+    axes[0].set(ylabel="Calibrated accuracy")
+    axes[-1].legend(bbox_to_anchor=(1.05, 1.05))
 
     plt.suptitle(f"Elicitation accuracy on {dataset_name.replace('_', ' ')}, GPT-2-XL")
     plt.tight_layout()
@@ -227,8 +228,8 @@ with open(f"{data_folder}/agg.pkl", "rb") as f:
 
 del agg_data['sst2_ab']
 
-for dataset_name in agg_data:
-    plot_figure(agg_data[dataset_name], dataset_name, demo_plot)
+# for dataset_name in agg_data:
+#     plot_figure(agg_data[dataset_name], dataset_name, demo_plot)
 # %%
 combined_stats = {
     n_demos: {
@@ -242,7 +243,7 @@ combined_stats = {
     } for n_demos in demo_plot
 }
 
-plot_figure(combined_stats, "all datasets", demo_plot)
+# plot_figure(combined_stats, "all datasets", demo_plot)
 
 # %%
 
@@ -336,20 +337,6 @@ for n_demos in demo_plot:
     plt.show()
 
 # %%
-
-CORR_SIZE = 12
-SMALL_SIZE = 18
-MEDIUM_SIZE = 20
-BIGGER_SIZE = 24
-
-plt.rc('font', size=SMALL_SIZE)          # controls default text sizes
-plt.rc('axes', titlesize=SMALL_SIZE)     # fontsize of the axes title
-plt.rc('axes', labelsize=MEDIUM_SIZE)    # fontsize of the x and y labels
-plt.rc('xtick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
-plt.rc('ytick', labelsize=SMALL_SIZE)    # fontsize of the tick labels
-plt.rc('legend', fontsize=CORR_SIZE)    # legend fontsize
-plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
-
 n_demos = 10
 
 main_figure = {

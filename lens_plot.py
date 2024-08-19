@@ -92,7 +92,7 @@ for title in titles:
             ax = sns.lineplot(x=x, y=corrs['dirs' if 'dirs' in corrs else 'points'][k], ax=axes[0], color=shade, linestyle=ls)
             axes[0].set(xlabel="Layer number", ylabel="Magnitude correlation")
 
-            ax = sns.lineplot(x=x, y=sim_vecs[k], ax=axes[-1], label=f"{model_name}, {ax_labels[k].split(' ')[0]}", color=shade, linestyle=ls)
+            ax = sns.lineplot(x=x, y=sim_vecs[k], ax=axes[-1], label=f"{model_name.replace('gpt', 'GPT-').replace('xl', 'XL')}, {ax_labels[k].split(' ')[0]}", color=shade, linestyle=ls)
             axes[-1].set(xlabel="Layer number", ylabel="Direction similarity")
             axes[-1].legend(loc='center left', bbox_to_anchor=(1, 0.5))
         # m, n = title.split("_")
@@ -163,7 +163,7 @@ for model_name in all_models:
         plt.ylim(-0.2,5.3)
         plt.xlabel("Layer number")
         plt.ylabel("KL-divergence")
-        plt.suptitle(f"Lens loss, {mn.replace('gpt', 'GPT-')}")
+        plt.suptitle(f"Lens loss, {mn.replace('gpt', 'GPT-').replace('xl', 'XL')}")
         plt.tight_layout()
         plt.savefig(f"{plot_folder}/overall-{mn}.png")
     continue
@@ -267,6 +267,7 @@ def load_plots(folders, lens_list, title, resample=False, offset=0, loop=False, 
     # break
 
 # %%
+lens_list = ['modal', 'tuned']
 plt.rc('axes', titlesize=12)     # fontsize of the axes title
 plt.rc('axes', labelsize=24)    # fontsize of the x and y labels
 
@@ -314,3 +315,5 @@ for model_name in all_models:
     plt.show()
     plt.close(f)
     
+
+# %%
