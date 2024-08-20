@@ -47,7 +47,7 @@ if not os.path.exists(plot_folder):
 # test_start = math.ceil(0.6 * len(correct_prompts))
 test_start = 0
 node_types = {"attn": "Attention", "mlp": "MLP"}
-labels={"gauss": "Gaussian noise", "oa": "Optimal ablation"}
+labels={"gauss": "GNT", "oa": "OAT"}
 colors={"oa": "black", "gauss": "red"}
 token_types={"last": "last token", "last_subject": "last subject token", "all_subject": "all subject tokens"}
 
@@ -193,7 +193,7 @@ for window_size, token_type in settings_list:
             })
 
         axes[i].set(xlabel="Layer number", ylabel="AIE")
-        axes[i].set_title(f"AIE, {node_types[node_type]} layers")
+        axes[i].set_title(f"{node_types[node_type]} layers")
         axes[i].legend()
 
     y1_min, y1_max = axes[0].get_ylim()
@@ -203,7 +203,7 @@ for window_size, token_type in settings_list:
     axes[0].set_ylim(common_min, common_max)
     axes[1].set_ylim(common_min, common_max)
 
-    plt.suptitle(f"AIE (proportion probability recovered) patching at {token_types[token_type]}, window size {(window_size * 2 + 1)}")
+    plt.suptitle(f"Causal tracing intervention at {token_types[token_type]}, window size {(window_size * 2 + 1)}")
 
     plt.tight_layout()
     plt.savefig(f"{plot_folder}/{token_type}_{window_size}.png")
