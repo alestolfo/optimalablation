@@ -46,13 +46,5 @@ fi
 
 EOT
 
-
-# if $COMMAND1; then
-#     $COMMAND2
-# else
-#     echo "failure so did not run post training"
-# fi
-# $COMMAND2
-
 done
 done

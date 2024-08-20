@@ -15,7 +15,6 @@ sns.set()
 folder="results/ablation_loss"
 plot_folder="plots_export/ablation_loss"
 dataset_list = {
-    # "gt": "Greater-Than", 
     "ioi": "IOI"}
 ablation_types = ["zero", "mean", "resample", "cf_mean", "oa_specific", "cf"]
 ax_labels = {

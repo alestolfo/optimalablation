@@ -24,9 +24,8 @@ from utils.task_datasets import get_task_ds
 # %%
 # dataset settings
 
-means_only=True
-condition_pos=True
 dataset = "ioi"
+condition_pos=True
 counterfactual=False
 
 if len(argv) >= 2 and argv[0].startswith("compute_means"):
@@ -36,6 +35,7 @@ if len(argv) >= 2 and argv[0].startswith("compute_means"):
     print(dataset, counterfactual)
 else:
     print("Not loading arguments", len(argv))
+    
 folder = f"results/oca/{dataset}"
 
 # %%
@@ -175,13 +175,12 @@ for i in tqdm(range(1000)):
 # are we taking the mean over the counterfactual distribution?
 cf_tag = "cf_" if counterfactual else ""
 
-if means_only:
-    with open(f"{folder}/means_{cf_tag}attention.pkl", "wb") as f:
-        # [seq_pos, layer, head, d_head]
-        pickle.dump(running_sum / running_samples.clamp(min=1)[:, None, None, None], f)
-    with open(f"{folder}/means_{cf_tag}mlp.pkl", "wb") as f:
-        # [seq_pos, layer, d_model]
-        pickle.dump(running_mlp_sum / running_samples.clamp(min=1)[:, None, None], f)
-    with open(f"{folder}/means_{cf_tag}samples.pkl", "wb") as f:
-        pickle.dump(running_samples, f)
+with open(f"{folder}/means_{cf_tag}attention.pkl", "wb") as f:
+    # [seq_pos, layer, head, d_head]
+    pickle.dump(running_sum / running_samples.clamp(min=1)[:, None, None, None], f)
+with open(f"{folder}/means_{cf_tag}mlp.pkl", "wb") as f:
+    # [seq_pos, layer, d_model]
+    pickle.dump(running_mlp_sum / running_samples.clamp(min=1)[:, None, None], f)
+with open(f"{folder}/means_{cf_tag}samples.pkl", "wb") as f:
+    pickle.dump(running_samples, f)
 # %%
