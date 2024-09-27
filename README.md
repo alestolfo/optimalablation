@@ -7,8 +7,6 @@ In this repository, we demo OA on three applications of ablation.
 2. Causal tracing ([Meng et al., 2022](https://arxiv.org/abs/2202.05262)
 3. Prediction with latent representations ([Belrose et al., 2023](https://arxiv.org/abs/2303.08112))
 
-We also propose Uniform Gradient Sampling (UGS), a methodological contribution to circuit discovery. Uniform Gradient Sampling is related to the "reparameterization trick" from [Louizos et al., 2018](https://arxiv.org/abs/1712.01312), which we refer to as HardConcrete Gradient Sampling (HCGS), but UGS samples gradients according to a mixture of the Uniform and Bernoulli distributions on ablation coefficients rather than a HardConcrete distribution.
-
 Our experiments are built to run on GPT-2.
 
 ## Circuit discovery
@@ -25,7 +23,7 @@ Our code supports running HCGS and UGS. Both methods involve applying a partial 
 
 ### Mask samplers
 
-The main difference between HCGS and UGS is how to sample the mask of ablation coefficients. We use a mask sampler class, which inherits from torch.nn.Module, to sample the coefficients according to some distributional parameters. When running a forward pass of each pruner class, we call _MaskSampler.forward()_ and then access the _MaskSampler.sampled_mask_ class member inside the forward pass of our pruner class to apply the ablation mask. We regularize on the distributional parameters directly by adding a loss term given by _MaskSampler.get_mask_loss()_.
+We use a mask sampler class, which inherits from torch.nn.Module, to sample the coefficients according to some distributional parameters. When running a forward pass of each pruner class, we call _MaskSampler.forward()_ and then access the _MaskSampler.sampled_mask_ class member inside the forward pass of our pruner class to apply the ablation mask. We regularize on the distributional parameters directly by adding a loss term given by _MaskSampler.get_mask_loss()_.
 
 **mask_samplers/MaskSampler.py** contains:
 - _ConstantMaskSampler_, which allows us to supply a constant (deterministic) mask. We use this class when evaluating a proposed circuit after training has converged.
