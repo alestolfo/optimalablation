@@ -8,50 +8,118 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 # %%
-n_layers = 12
-n_heads = 12
-device="cuda:0"
 
-layers_to_prune = []
-for layer_no in range(n_layers):
-    layers_to_prune.append(("attn", layer_no))
-    layers_to_prune.append(("mlp", layer_no))
-layers_to_prune.append(("mlp", n_layers))
+# n_layers = 12
+# n_heads = 12
+device= "cuda" if torch.cuda.is_available() else "mps"
 
-edge_prune_mask = {
-    "attn-attn": [
-        # edges from attn layers into q, k, v circuits
-        # first n_heads is the receiver dimension
-        torch.ones((1, 3, n_heads, i, n_heads)).to(device)
-        for i in range(n_layers)
-    ], 
-    "mlp-attn": [
-        # edges from input embedding and previous MLP to q, k, v circuits
-        torch.ones((1, 3, n_heads, i+1)).to(device)
-        for i in range(n_layers)
-    ],
-    "attn-mlp": [
-        # edges from attn layers into MLP and output embedding
-        torch.ones((1, min(i+1, n_layers), n_heads)).to(device)
-        for i in range(n_layers+1)
-    ],
-    "mlp-mlp": [
-        # edges from input embedding and previous MLP to MLP and output embedding
-        torch.ones((1, i+1)).to(device)
-        for i in range(n_layers + 1)
-    ]
-}
+def edge_prune_mask(model_cfg):
+    n_layers = model_cfg.n_layers
+    n_heads = model_cfg.n_heads
+    device = model_cfg.device
 
-vertex_prune_mask = {
-    "attn": [
-        torch.ones((1, n_heads)).to(device) 
-        for _ in range(n_layers)
-    ],
-    "mlp": [
-        torch.ones((1,)).to(device)
-        for _ in range(n_layers)
-    ]
-}
+    edge_prune_mask = {
+        "attn-attn": [
+            # edges from attn layers into q, k, v circuits
+            # first n_heads is the receiver dimension
+            torch.ones((1, 3, n_heads, i, n_heads)).to(device)
+            for i in range(n_layers)
+        ], 
+        "mlp-attn": [
+            # edges from input embedding and previous MLP to q, k, v circuits
+            torch.ones((1, 3, n_heads, i+1)).to(device)
+            for i in range(n_layers)
+        ],
+        "attn-mlp": [
+            # edges from attn layers into MLP and output embedding
+            torch.ones((1, min(i+1, n_layers), n_heads)).to(device)
+            for i in range(n_layers+1)
+        ],
+        "mlp-mlp": [
+            # edges from input embedding and previous MLP to MLP and output embedding
+            torch.ones((1, i+1)).to(device)
+            for i in range(n_layers + 1)
+        ]
+    }
+
+    return edge_prune_mask
+
+
+
+# def edge_prune_mask(model_cfg):
+#     n_layers = model_cfg.n_layers
+#     n_heads = model_cfg.n_heads
+#     device = model_cfg.device
+
+#     mlp_prune_mask = {
+#         "attn-mlp": [
+#             # edges from attn layers into MLP and output embedding
+#             torch.ones((1, min(i+1, n_layers), n_heads)).to(device)
+#             for i in range(n_layers+1)
+#         ],
+#         "mlp-mlp": [
+#             # edges from input embedding and previous MLP to MLP and output embedding
+#             torch.ones((1, i+1)).to(device)
+#             for i in range(n_layers + 1)
+#         ]
+#     }
+
+#     if 'gpt2' in model_cfg.model_name:
+#         attn_prune_mask = {
+#             "attn-attn": [
+#                 # edges from attn layers into q, k, v circuits
+#                 # first n_heads is the receiver dimension
+#                 torch.ones((1, 3, n_heads, i, n_heads)).to(device)
+#                 for i in range(n_layers)
+#             ], 
+#             "mlp-attn": [
+#                 # edges from input embedding and previous MLP to q, k, v circuits
+#                 torch.ones((1, 3, n_heads, i+1)).to(device)
+#                 for i in range(n_layers)
+#             ],
+#         }
+#     elif 'Qwen' in model_cfg.model_name:
+#         attn_prune_mask = {
+#             "attn-attn-q": [
+#                 # edges from attn layers into the q circuit
+#                 # first n_heads is the receiver dimension
+#                 torch.ones((1, 1, n_heads, i, n_heads)).to(device)
+#                 for i in range(n_layers)
+#             ], 
+#             "attn-attn-kv": [
+#                 # edges from attn layers into the k, v circuits
+#                 torch.ones((1, 2, model_cfg.n_key_value_heads, i, n_heads)).to(device)
+#                 for i in range(n_layers)
+#             ],
+#             "mlp-attn-q": [
+#                 # edges from input embedding and previous MLP to the q circuit
+#                 torch.ones((1, 1, n_heads, i+1)).to(device)
+#                 for i in range(n_layers)
+#             ],
+#             "mlp-attn-kv": [
+#                 # edges from input embedding and previous MLP to the k, v circuits
+#                 torch.ones((1, 2, model_cfg.n_key_value_heads, i+1)).to(device)
+#                 for i in range(n_layers)
+#             ],
+#         }
+
+#     # merge dictionaries
+#     prune_mask = {**attn_prune_mask, **mlp_prune_mask}
+
+#     return prune_mask
+
+# vertex_prune_mask = {
+#     "attn": [
+#         torch.ones((1, n_heads)).to(device) 
+#         for _ in range(n_layers)
+#     ],
+#     "mlp": [
+#         torch.ones((1,)).to(device)
+#         for _ in range(n_layers)
+#     ]
+# }
+
+vertex_prune_mask = {} # todo ideally take care of this
 
 IOI_MANUAL_CIRCUIT = {
     "name mover": [
@@ -150,7 +218,7 @@ def retrieve_mask(folder, state_dict=False):
 
     if os.path.exists(snapshot_path):
         print("Loading previous training run")
-        previous_state = torch.load(snapshot_path)
+        previous_state = torch.load(snapshot_path, map_location=torch.device('cpu'))
 
         prune_mask = {}
         for k in previous_state['pruner_dict']:
@@ -206,6 +274,15 @@ def prune_dangling_edges(filtered_prune_mask, bsz=1, skip_filtering=False, node_
 
     if skip_filtering:
         return filtered_prune_mask, num_edges, num_edges, None, None
+    
+    n_layers = filtered_prune_mask['attn-mlp'][-1].shape[1]
+    n_heads = filtered_prune_mask['attn-mlp'][-1].shape[2]
+
+    layers_to_prune = []
+    for layer_no in range(n_layers):
+        layers_to_prune.append(("attn", layer_no))
+        layers_to_prune.append(("mlp", layer_no))
+    layers_to_prune.append(("mlp", n_layers))
 
     attn_edges_out = torch.zeros((bsz, n_layers, n_heads)).to(device)
     mlp_edges_out = torch.zeros((bsz, n_layers + 2)).to(device)

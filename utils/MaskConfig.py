@@ -96,7 +96,7 @@ class InferenceConfig:
 
         if gpu_requeue and os.path.exists(snapshot_path) and os.path.exists(metadata_path):
             print("Loading previous training run")
-            previous_state = torch.load(snapshot_path)
+            previous_state = torch.load(snapshot_path, map_location=self.device)
             sampling_optimizer.load_state_dict(previous_state['sampling_optim_dict'])
 
             pruner_dict = previous_state['pruner_dict']
@@ -242,7 +242,7 @@ class InferenceConfig:
 class EdgeInferenceConfig(InferenceConfig):
     def __init__(self, cfg, device, folder, 
                  batch_size=None, init_param=-0.5, init_scale=None, use_temp=False):
-        super().__init__(device, folder, cfg, edge_prune_mask)
+        super().__init__(device, folder, cfg, edge_prune_mask(cfg))
 
         if batch_size is None:
             self.batch_size = 5
@@ -275,4 +275,3 @@ class VertexInferenceConfig(InferenceConfig):
         self.initialize_params(init_param, init_scale, use_temp=use_temp)
 
 # %%
-
